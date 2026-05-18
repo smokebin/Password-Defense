@@ -8,7 +8,6 @@
 #include "third_party/imgui/imgui_impl_dx11.h"
 #include "third_party/imgui/imgui_internal.h"
 #include "UI.h"
-#include "tools/xor.h"
 
 
 #define DIRECTINPUT_VERSION 0x0800
