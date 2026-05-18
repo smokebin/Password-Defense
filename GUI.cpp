@@ -24,7 +24,6 @@ static bool g_minimize_to_tray  = false;  // cached from ShellState each frame
 #define STB_IMAGE_IMPLEMENTATION
 #include "third_party/stb_image.h"
 #include "favicon.h"
-#include "sidebar_icons.h"
 
 // forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -396,7 +395,6 @@ void render::GUIInit()
 
 	// Initialize favicon cache
 	favicon::Init();
-	sidebar_icons::Init();
 
 	// Add system tray icon
 	AddTrayIcon();
@@ -409,7 +407,6 @@ void render::GUIShutDown()
 	//CLEANUP & SHUTDOWN
 	RemoveTrayIcon();
 	favicon::Shutdown();
-	sidebar_icons::Shutdown();
 	ImGui_ImplDX11_Shutdown();
 	ImGui_ImplWin32_Shutdown();
 	ImGui::DestroyContext();

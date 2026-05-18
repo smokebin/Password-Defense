@@ -131,9 +131,6 @@
     <ClCompile Include="app_display_helpers.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="sidebar_icons.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="ui_views_threepane.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
