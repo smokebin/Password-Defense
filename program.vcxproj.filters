@@ -1,0 +1,260 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Header Files\resources">
+      <UniqueIdentifier>{9fe64a86-a297-40a9-9ff4-10a451b6073a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\resources">
+      <UniqueIdentifier>{88dc653b-5de2-49ee-a10a-f09f94d7ce47}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="tools">
+      <UniqueIdentifier>{b1ac39f5-e70d-470c-a0f7-76bb76072c0f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="credentials">
+      <UniqueIdentifier>{a65354c9-e8fc-4aba-8803-9a815a6fcd1c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="credentials\crypto">
+      <UniqueIdentifier>{6ea6de52-9aee-446c-9f97-f33915655723}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="credentials\transfer">
+      <UniqueIdentifier>{6752315b-f056-4fec-997c-9d67b1b5cb18}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="icons">
+      <UniqueIdentifier>{e1ed2aac-b0eb-47ab-a743-30b551c66cac}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gui">
+      <UniqueIdentifier>{1dacb33a-5e63-4e8a-bac1-90df472439fb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="gui\imgui">
+      <UniqueIdentifier>{226abf1a-2e81-40d4-ae97-b4298a1f1c68}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="application.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="favicon.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="GUI.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_demo.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_impl_dx11.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_impl_win32.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_stdlib.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
+      <Filter>gui\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="tools\save.cpp">
+      <Filter>tools</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\crypto\aes_cipher.cpp">
+      <Filter>credentials\crypto</Filter>
+    </ClCompile>
+    <ClCompile Include="tools\utility.cpp">
+      <Filter>tools</Filter>
+    </ClCompile>
+    <ClCompile Include="UI.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\vault_db.cpp">
+      <Filter>credentials</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\credential_ops.cpp">
+      <Filter>credentials</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\crypto\vault_crypto.cpp">
+      <Filter>credentials\crypto</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\transfer\pwm_file.cpp">
+      <Filter>credentials\transfer</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\transfer\kdbx_export.cpp">
+      <Filter>credentials\transfer</Filter>
+    </ClCompile>
+    <ClCompile Include="A:\libs\sqlite3\sqlite3.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="web\auth_crypto.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="web\sync_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="credentials\twofa_ops.cpp">
+      <Filter>credentials</Filter>
+    </ClCompile>
+    <ClCompile Include="tools\totp.cpp">
+      <Filter>tools</Filter>
+    </ClCompile>
+    <ClCompile Include="tools\qrcodegen.cpp">
+      <Filter>tools</Filter>
+    </ClCompile>
+    <ClCompile Include="web\local_server.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_widgets.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_views.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_controls.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_modals.cpp">
+      <Filter>gui</Filter>
+    </ClCompile>
+    <ClCompile Include="app_import_export.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="app_sharing.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="third_party\stb_image.h">
+      <Filter>Header Files\resources</Filter>
+    </ClInclude>
+    <ClInclude Include="tools\xor.h">
+      <Filter>tools</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imconfig.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_impl_dx11.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_impl_win32.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_internal.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imgui_stdlib.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_rectpack.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_textedit.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\imgui\imstb_truetype.h">
+      <Filter>gui\imgui</Filter>
+    </ClInclude>
+    <ClInclude Include="tools\save.h">
+      <Filter>tools</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\credential.h">
+      <Filter>credentials</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\crypto\aes_cipher.h">
+      <Filter>credentials\crypto</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\json.hpp">
+      <Filter>Header Files\resources</Filter>
+    </ClInclude>
+    <ClInclude Include="third_party\json_fwd.hpp">
+      <Filter>Header Files\resources</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\transfer\pwm_file.h">
+      <Filter>credentials\transfer</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\transfer\kdbx_export.h">
+      <Filter>credentials\transfer</Filter>
+    </ClInclude>
+    <ClInclude Include="tools\utility.h">
+      <Filter>tools</Filter>
+    </ClInclude>
+    <ClInclude Include="icons\mdi_font_data.h">
+      <Filter>icons</Filter>
+    </ClInclude>
+    <ClInclude Include="favicon.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="favicon_data.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="GUI.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="UI.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\vault_db.h">
+      <Filter>credentials</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\credential_ops.h">
+      <Filter>credentials</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\cred_type.h">
+      <Filter>credentials</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\crypto\vault_crypto.h">
+      <Filter>credentials\crypto</Filter>
+    </ClInclude>
+    <ClInclude Include="web\auth_crypto.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="web\sync_manager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="credentials\twofa_ops.h">
+      <Filter>credentials</Filter>
+    </ClInclude>
+    <ClInclude Include="tools\totp.h">
+      <Filter>tools</Filter>
+    </ClInclude>
+    <ClInclude Include="tools\qrcodegen.hpp">
+      <Filter>tools</Filter>
+    </ClInclude>
+    <ClInclude Include="web\local_server.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="icons\IconsMaterialDesignIcons.h">
+      <Filter>icons</Filter>
+    </ClInclude>
+    <ClInclude Include="ui_internal.h">
+      <Filter>gui</Filter>
+    </ClInclude>
+    <ClInclude Include="app_internal.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="resources.rc" />
+  </ItemGroup>
+</Project>
