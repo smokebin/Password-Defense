@@ -1,0 +1,23 @@
+{
+     "db_path": "A:\\prjcts\\pwmngr\\pwmngr2.2.1\\x64\\Release\\vault-0.db",
+     "detailed_header_columns": {
+          "date": true,
+          "email": true,
+          "index": true,
+          "pin_fav": true,
+          "sub_card": true,
+          "sub_identity": true,
+          "sub_note": true,
+          "sub_password": true,
+          "title": true,
+          "username": true
+     },
+     "group_mode": 0,
+     "reprompt_reveal_notes": false,
+     "theme": 0,
+     "three_pane_list_collapsed": false,
+     "three_pane_sidebar_auto_collapse": false,
+     "three_pane_sidebar_collapsed": false,
+     "view_mode": 4,
+     "wnd_border": "1.000000,1.000000,1.000000"
+}
