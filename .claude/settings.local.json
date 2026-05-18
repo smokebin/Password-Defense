@@ -55,7 +55,14 @@
       "Bash(sed -i 's/    static AccordionListResult RenderTableView/    AccordionListResult RenderTableView/' ui_views_table.cpp)",
       "Bash(sed -i '2053,2469d' \"A:/prjcts/pwmngr/pwmngr2.2.1/application.cpp\")",
       "Bash(sed -i '952,1041d' \"A:/prjcts/pwmngr/pwmngr2.2.1/application.cpp\")",
-      "Bash(ls -la \"A:\\\\prjcts\\\\pwmngr\\\\pwmngr2.2.1\"/*.cpp)"
+      "Bash(ls -la \"A:\\\\prjcts\\\\pwmngr\\\\pwmngr2.2.1\"/*.cpp)",
+      "Bash(ls *.sln *.vcxproj)",
+      "Bash(where msbuild *)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"A:\\\\prjcts\\\\pwmngr\\\\pw-windows\\\\PasswordDefense.sln\" /p:Configuration=Release /p:Platform=x64 /m /nologo /v:minimal /clp:ErrorsOnly)",
+      "PowerShell(& \"C:\\\\Program Files\\\\Microsoft Visual Studio\\\\2022\\\\Community\\\\MSBuild\\\\Current\\\\Bin\\\\MSBuild.exe\" \"A:\\\\prjcts\\\\pwmngr\\\\pw-windows\\\\PasswordDefense.sln\" /p:Configuration=Release /p:Platform=x64 /m /nologo /v:minimal 2>&1 | Select-Object -Last 6; Get-ChildItem \"A:\\\\prjcts\\\\pwmngr\\\\pw-windows\\\\x64\\\\Release\\\\Password Defense.exe\" | Select-Object Name,Length,LastWriteTime)",
+      "PowerShell(Get-Item *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)"
     ]
   }
 }

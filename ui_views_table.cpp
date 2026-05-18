@@ -688,8 +688,6 @@ namespace ui
                 ImGui::Separator();
                 if (BarMenuItem(ICON_MDI_PENCIL "   Edit Credential", false, !read_only))
                     out.edit_open_id = c.id;
-                if (BarMenuItem(ICON_MDI_SHARE_VARIANT "   Share Credential", false))
-                    out.anon_share_id = c.id;
                 ImGui::Separator();
                 if (BarMenuItem(ICON_MDI_DELETE "   Delete Credential", false, !read_only))
                     out.delete_id = c.id;

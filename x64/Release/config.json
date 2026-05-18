@@ -1,5 +1,5 @@
 {
-     "db_path": "A:\\prjcts\\pwmngr\\pwmngr2.2.1\\x64\\Release\\vault-0.db",
+     "db_path": "A:\\prjcts\\pwmngr\\pw-windows\\x64\\Release\\vault-0.db",
      "detailed_header_columns": {
           "date": true,
           "email": true,
@@ -13,6 +13,7 @@
           "username": true
      },
      "group_mode": 0,
+     "online_favicons": true,
      "reprompt_reveal_notes": false,
      "theme": 0,
      "three_pane_list_collapsed": false,

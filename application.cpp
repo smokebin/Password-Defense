@@ -31,15 +31,9 @@
 #include "credentials/transfer/kdbx_export.h"
 #include "tools/utility.h"
 #include "tools/totp.h"
-#include "web/auth_crypto.h"  // Option C auth hash
-#include "web/sync_manager.h" // Cloud sync
-#include "web/local_server.h" // Localhost extension server
 #include "tools/save.h"          // Config persistence
 #include "app_internal.h"     // Shared declarations for split TUs
 #include "theme_colors.h"
-
-// Localhost HTTP server for browser extension integration
-static LocalServer g_local_server;
 
 // serialize_creds_json / deserialize_creds_json moved to app_import_export.cpp
 
@@ -370,174 +364,7 @@ struct CredentialModal
 
 static CredentialModal g_cred_modal;
 
-// ============================================================
-// Sync Auth Modal: Login/Register dialog for cloud sync
-// ============================================================
-struct SyncAuthModal
-{
-    enum class Mode { Closed, Login, Register };
-    Mode mode = Mode::Closed;
 
-    // Form fields
-    std::string server_url;
-    std::string email;
-    std::string username;           // Register only
-    std::string password;
-    std::string password_confirm;   // Register only
-    bool show_password = false;
-
-    // State
-    std::string error_msg;
-    bool loading = false;
-
-    bool IsOpen() const { return mode != Mode::Closed; }
-    bool Islogin() const { return mode == Mode::Login; }
-    bool Isregister_user() const { return mode == Mode::Register; }
-
-    void Openlogin(const std::string& default_url = "")
-    {
-        mode = Mode::Login;
-        server_url = default_url;
-        email.clear();
-        username.clear();
-        password.clear();
-        password_confirm.clear();
-        error_msg.clear();
-        show_password = false;
-        loading = false;
-    }
-
-    void Openregister_user(const std::string& default_url = "")
-    {
-        mode = Mode::Register;
-        server_url = default_url;
-        email.clear();
-        username.clear();
-        password.clear();
-        password_confirm.clear();
-        error_msg.clear();
-        show_password = false;
-        loading = false;
-    }
-
-    void Close()
-    {
-        mode = Mode::Closed;
-        // Clear sensitive data
-        password.clear();
-        password_confirm.clear();
-        error_msg.clear();
-    }
-};
-
-static SyncAuthModal g_sync_modal;
-static std::unique_ptr<SyncManager> g_sync_mgr;
-
-// ============================================================
-// Anonymous Share Modal
-// ============================================================
-struct AnonShareModal {
-    enum class Step { Config, Creating, Done, Error };
-    Step step = Step::Config;
-    Credential cred{};
-    std::string password{};
-    int expiry_idx = 1;      // 0=1h, 1=24h, 2=7d, 3=30d, 4=Never
-    int views_idx = 0;       // 0=1, 1=5, 2=10, 3=Unlimited
-    std::string share_url{};
-    std::string error_msg{};
-    std::atomic<bool> creating{false};
-
-    void Reset() {
-        step = Step::Config;
-        secure_clear_credential(cred);
-        cred = Credential{};
-        sodium_memzero(password.data(), password.size());
-        password.clear();
-        expiry_idx = 1;
-        views_idx = 0;
-        // URL fragment contains the encryption key — zero before clearing
-        sodium_memzero(share_url.data(), share_url.size());
-        share_url.clear();
-        error_msg.clear();
-        creating = false;
-    }
-};
-static AnonShareModal g_anon_share;
-
-// Anonbase64_encode, base64_decode, base64_url_encode,
-// serialize_credential_for_share moved to app_sharing.cpp
-
-static void DoCreateAnonShare() {
-    static const int expiry_seconds[] = { 3600, 86400, 604800, 2592000, 0 };
-    static const int max_views_vals[] = { 1, 5, 10, 0 };
-
-    try {
-        // 1. Generate random 32-byte key
-        std::vector<uint8_t> key(32);
-        randombytes_buf(key.data(), key.size());
-
-        // 2. Encrypt Credential JSON with legacy (no AAD) encryption
-        std::string json = serialize_credential_for_share(g_anon_share.cred, g_anon_share.password);
-        std::vector<uint8_t> blob = enc::encrypt_credential_legacy(json, key);
-
-        // 3. Base64 encode for upload
-        std::string encrypted_data = Anonbase64_encode(blob);
-
-        // 4. Build request payload
-        nlohmann::json payload;
-        payload["encrypted_data"] = encrypted_data;
-        payload["max_views"] = max_views_vals[g_anon_share.views_idx];
-
-        int exp_sec = expiry_seconds[g_anon_share.expiry_idx];
-        if (exp_sec > 0)
-            payload["expires_in"] = exp_sec;
-        else
-            payload["expires_in"] = nullptr;
-
-        // 5. Upload
-        auto resp = g_sync_mgr->make_auth_request("POST", "/api/pm/share/anon", payload.dump());
-        if (!resp.success || resp.status_code != 201) {
-            auto j = nlohmann::json::parse(resp.body, nullptr, false);
-            std::string msg = "Upload failed";
-            if (j.is_object() && j.contains("message"))
-                msg = j["message"].get<std::string>();
-            g_anon_share.error_msg = msg;
-            g_anon_share.step = AnonShareModal::Step::Error;
-            g_anon_share.creating = false;
-            return;
-        }
-
-        // 6. Parse response token
-        auto j = nlohmann::json::parse(resp.body);
-        std::string token = j["token"].get<std::string>();
-
-        // 7. Store token for share status tracking
-        if (!g_anon_share.cred.uuid.empty()) {
-            vault_db::set_sync_state("share_token:" + g_anon_share.cred.uuid, token);
-            vault_db::set_sync_state("share_created:" + g_anon_share.cred.uuid,
-                std::to_string(helpers::now_unix_ms()));
-        }
-
-        // 8. Construct URL
-        g_anon_share.share_url = "https://passworddefense.net/s/" + token + "#" + base64_url_encode(key);
-
-        // Clear key from memory
-        sodium_memzero(key.data(), key.size());
-
-        g_anon_share.step = AnonShareModal::Step::Done;
-        g_anon_share.creating = false;
-    }
-    catch (const std::exception& e) {
-        g_anon_share.error_msg = std::string("Error: ") + e.what();
-        g_anon_share.step = AnonShareModal::Step::Error;
-        g_anon_share.creating = false;
-    }
-    catch (...) {
-        g_anon_share.error_msg = "Unknown error creating share link";
-        g_anon_share.step = AnonShareModal::Step::Error;
-        g_anon_share.creating = false;
-    }
-}
 
 struct AutoSaveController
 {
@@ -609,6 +436,51 @@ static uint32_t GetVaultKey(const VaultTab& tab)
 static uint32_t GetActiveVaultKey()
 {
     return GetVaultKey(ActiveTab());
+}
+
+// ============================================================
+// Minimal WinHTTP helper for HIBP breach check
+// ============================================================
+#include <winhttp.h>
+#pragma comment(lib, "winhttp.lib")
+
+struct HttpResponse { bool success = false; int status_code = 0; std::string body; std::string error; };
+
+static HttpResponse win_http_request(const char* method, const char* host, int port, bool https, const std::string& path)
+{
+    HttpResponse r;
+    HINTERNET hSession = WinHttpOpen(L"PasswordDefense/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
+    if (!hSession) { r.error = "WinHttpOpen failed"; return r; }
+
+    std::wstring wHost(host, host + strlen(host));
+    HINTERNET hConnect = WinHttpConnect(hSession, wHost.c_str(), (INTERNET_PORT)port, 0);
+    if (!hConnect) { WinHttpCloseHandle(hSession); r.error = "WinHttpConnect failed"; return r; }
+
+    std::wstring wPath(path.begin(), path.end());
+    std::wstring wMethod(method, method + strlen(method));
+    DWORD flags = https ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, wMethod.c_str(), wPath.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (!hRequest) { WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); r.error = "WinHttpOpenRequest failed"; return r; }
+
+    if (!WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(hRequest, nullptr)) {
+        r.error = "Request failed"; WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession); return r;
+    }
+
+    DWORD statusCode = 0, sz = sizeof(statusCode);
+    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &statusCode, &sz, nullptr);
+    r.status_code = (int)statusCode;
+
+    DWORD bytesRead = 0;
+    char buf[4096];
+    while (WinHttpReadData(hRequest, buf, sizeof(buf), &bytesRead) && bytesRead > 0) {
+        r.body.append(buf, bytesRead);
+        bytesRead = 0;
+    }
+
+    r.success = true;
+    WinHttpCloseHandle(hRequest); WinHttpCloseHandle(hConnect); WinHttpCloseHandle(hSession);
+    return r;
 }
 
 // ============================================================
@@ -917,22 +789,6 @@ static void VaultMarkSaved(VaultState& v)
     }
 }
 
-// Start local extension server if enabled (call after vault unlock)
-static void StartLocalServerIfEnabled(VaultState& v)
-{
-    if (!g_shell.local_server_enabled) return;
-    if (v.master_key.empty()) return;
-
-    auto salt = vault_db::get_cached_salt();
-    if (salt.empty()) return;
-
-    g_local_server.SetMasterKey(v.master_key);
-    g_local_server.SetSalt(salt);
-    g_local_server.UpdateCredentials(v.creds);
-    g_local_server.SetActiveVaultPath(v.vault_path);
-    g_local_server.Start(g_shell.local_server_port);
-}
-
 static void VaultMarkChanged(VaultState& v, const char* preTagForBackup)
 {
     // If we are currently clean, take the one-time "first edit" safety backup.
@@ -940,10 +796,6 @@ static void VaultMarkChanged(VaultState& v, const char* preTagForBackup)
         CreatePreOpBackup(v, preTagForBackup ? preTagForBackup : "EDIT");
 
     VaultRecomputeDirty(v);
-
-    // Push updated credentials to the extension server
-    if (g_local_server.IsRunning())
-        g_local_server.UpdateCredentials(v.creds);
 
     // Your autosave debounce uses this
     g_autosave.last_change_time = ImGui::GetTime();
@@ -1694,272 +1546,6 @@ static void render_credential_modal(VaultState& v)
         g_cred_modal.Close();
 }
 
-// ============================================================
-// Sync Auth Modal Rendering
-// ============================================================
-static void init_sync_manager()
-{
-    if (!g_sync_mgr) {
-        std::string url = cfg::get_sync_server_url();
-        if (url.empty()) url = "https://api.passworddefense.net";
-        g_sync_mgr = std::make_unique<SyncManager>(url);
-
-        // Set up status callback to update shell state
-        g_sync_mgr->set_status_callback([](SyncStatus status, const std::string& msg) {
-            g_shell.sync_status = static_cast<int>(status);
-            g_shell.sync_status_msg = msg;
-        });
-
-        // Set up sync complete callback
-        g_sync_mgr->set_sync_complete_callback([](const SyncResult& result) {
-            if (result.success) {
-                g_shell.last_sync_ms = helpers::now_unix_ms();
-
-                // Reload credentials if we pulled any changes from server
-                if (result.pulled > 0) {
-                    VaultState& v = ActiveVault();
-                    if (v.unlocked && !v.master_key.empty()) {
-                        // Keep changed-highlighting snapshot in sync with freshly pulled DB state.
-                        ReloadVaultCredentials();
-                    }
-                }
-            }
-        });
-
-        // Restore login state from config
-        g_shell.sync_server_url = url;
-
-        // Try to restore session from stored tokens
-        if (g_sync_mgr->load_tokens_from_db()) {
-            g_shell.sync_logged_in = g_sync_mgr->is_logged_in();
-            g_shell.sync_username = g_sync_mgr->get_username();
-        }
-    }
-}
-
-static void propagate_sync_tokens()
-{
-    if (!g_sync_mgr || !g_sync_mgr->is_logged_in()) return;
-    if (!vault_db::is_open()) return;
-    std::string existing = vault_db::get_sync_state("sync_access_token");
-    if (existing.empty())
-        g_sync_mgr->save_tokens_to_db();
-}
-
-static void render_sync_modal()
-{
-    if (!g_sync_modal.IsOpen()) return;
-
-    init_sync_manager();
-
-    // Theme-aware modal colors
-    const ImU32 popupBg = cfg::is_dark_theme()
-        ? theme::ModalBg.dark
-        : theme::ModalBg.light;
-    const ImU32 dimBg = colors::DimOverlayLight;
-
-    // Styling
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, popupBg);
-    ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, dimBg);
-
-    const float modalW = 380.0f;
-    ImGui::SetNextWindowSizeConstraints(ImVec2(modalW, 0), ImVec2(modalW, FLT_MAX));
-
-    const char* modal_title = g_sync_modal.Islogin()
-        ? "Sign In###sync_modal"
-        : "Create Account###sync_modal";
-
-    bool modal_open = true;
-    if (ImGui::BeginPopupModal(modal_title, &modal_open,
-        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
-    {
-        // Keyboard shortcuts
-        bool escape_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
-        bool submit_shortcut = ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyPressed(ImGuiKey_Enter);
-
-        // Header
-        ImGui::PushFont(render::FontLarge);
-        ImGui::TextUnformatted(g_sync_modal.Islogin() ? "Sign In to Sync" : "Create Account");
-        ImGui::PopFont();
-        ImGui::Dummy(ImVec2(0, 12));
-
-        const float fieldW = ImGui::GetContentRegionAvail().x;
-
-        // Server URL is set but not shown in UI
-        // (uses default from cfg::get_sync_server_url() or fallback)
-
-        // Email
-        ImGui::TextDisabled("Email");
-        ImGui::SetNextItemWidth(fieldW);
-        ui::InputTextString("##sync_email", &g_sync_modal.email);
-
-        // Username (register only)
-        if (g_sync_modal.Isregister_user()) {
-            ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextDisabled("Username");
-            ImGui::SetNextItemWidth(fieldW);
-            ui::InputTextString("##sync_username", &g_sync_modal.username);
-        }
-
-        ImGui::Dummy(ImVec2(0, 4));
-
-        // Password
-        ImGui::TextDisabled("Password");
-        ImGui::SetNextItemWidth(fieldW);
-        if (g_sync_modal.show_password)
-            ui::InputTextString("##sync_password", &g_sync_modal.password);
-        else
-            ui::InputTextPasswordReveal("##sync_password", &g_sync_modal.password);
-
-        // Confirm password (register only)
-        if (g_sync_modal.Isregister_user()) {
-            ImGui::Dummy(ImVec2(0, 4));
-            ImGui::TextDisabled("Confirm Password");
-            ImGui::SetNextItemWidth(fieldW);
-            if (g_sync_modal.show_password)
-                ui::InputTextString("##sync_password_confirm", &g_sync_modal.password_confirm);
-            else
-                ui::InputTextPasswordReveal("##sync_password_confirm", &g_sync_modal.password_confirm);
-        }
-
-        ImGui::Checkbox2("Show password", &g_sync_modal.show_password);
-
-        // Error message
-        if (!g_sync_modal.error_msg.empty()) {
-            ImGui::Dummy(ImVec2(0, 8));
-            ImGui::PushStyleColor(ImGuiCol_Text, colors::StatusWeak);
-            ImGui::TextWrapped("%s", g_sync_modal.error_msg.c_str());
-            ImGui::PopStyleColor();
-        }
-
-        ImGui::Dummy(ImVec2(0, 12));
-
-        // Validation
-        bool can_submit = !g_sync_modal.server_url.empty() &&
-                          !g_sync_modal.email.empty() &&
-                          !g_sync_modal.password.empty();
-
-        if (g_sync_modal.Isregister_user()) {
-            can_submit = can_submit &&
-                         !g_sync_modal.username.empty() &&
-                         g_sync_modal.password == g_sync_modal.password_confirm;
-        }
-
-        // Buttons
-        const float btnW = 100.0f;
-        const float btnH = 32.0f;
-        float totalBtnW = btnW * 2 + 8.0f;
-        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + fieldW - totalBtnW);
-
-        if (ImGui::Button("Cancel", ImVec2(btnW, btnH)) || escape_pressed) {
-            g_sync_modal.Close();
-            ImGui::CloseCurrentPopup();
-        }
-
-        ImGui::SameLine(0, 8.0f);
-
-        ImGui::BeginDisabled(!can_submit || g_sync_modal.loading);
-        const char* submit_label = g_sync_modal.Islogin() ? "Sign In" : "Register";
-        bool submit_clicked = ImGui::Button(submit_label, ImVec2(btnW, btnH));
-
-        if ((submit_clicked || submit_shortcut) && can_submit && !g_sync_modal.loading) {
-            g_sync_modal.loading = true;
-            g_sync_modal.error_msg.clear();
-
-            // Update server URL
-            g_sync_mgr->set_base_url(g_sync_modal.server_url);
-            cfg::set_sync_server_url(g_sync_modal.server_url);
-            g_shell.sync_server_url = g_sync_modal.server_url;
-
-            // Compute auth hash (Option C: sha256(password + email))
-            std::string auth_hash = auth::compute_auth_hash(
-                g_sync_modal.password, g_sync_modal.email);
-
-            AuthResult result;
-            if (g_sync_modal.Islogin()) {
-                result = g_sync_mgr->login(g_sync_modal.email, auth_hash);
-            } else {
-                result = g_sync_mgr->register_user(
-                    g_sync_modal.username, g_sync_modal.email, auth_hash);
-            }
-
-            g_sync_modal.loading = false;
-
-            if (result.success) {
-                // Login returns tokens, Register does not (user needs to login after)
-                if (g_sync_modal.Islogin()) {
-                    g_shell.sync_logged_in = true;
-                    g_shell.sync_username = result.username.empty() ? g_sync_modal.email : result.username;
-                }
-
-                // Handle encryption salt synchronization
-                if (vault_db::is_open()) {
-                    VaultState& v = ActiveVault();
-                    auto local_salt = vault_db::get_cached_salt();
-
-                    if (result.has_server_salt && !result.encryption_salt.empty()) {
-                        // Server has salt - check if different from local
-                        if (local_salt != result.encryption_salt) {
-                            if (v.unlocked && !v.session_password.empty() && !v.master_key.empty()) {
-                                auto new_key = enc::derive_master_key(v.session_password, result.encryption_salt);
-                                if (!new_key.empty()) {
-                                    auto old_key = std::move(v.master_key);
-                                    v.master_key = std::move(new_key);
-                                    vault_db::set_cached_salt(result.encryption_salt);
-
-                                    // Re-encrypt all credentials with new key
-                                    bool re_encrypt_ok = true;
-                                    for (auto& c : v.creds) {
-                                        if (!cred_ops::update(c.uuid, c, v.master_key)) {
-                                            re_encrypt_ok = false;
-                                            break;
-                                        }
-                                        c.is_dirty = true;
-                                    }
-
-                                    if (re_encrypt_ok) {
-                                        enc::secure_zero(old_key);
-                                        if (vault_db::has_recovery_key())
-                                            vault_db::delete_recovery_blob();
-                                    } else {
-                                        // Rollback
-                                        v.master_key = std::move(old_key);
-                                        vault_db::set_cached_salt(local_salt);
-                                    }
-                                }
-                            } else {
-                                // Vault locked or no password - just save salt for next unlock
-                                vault_db::set_cached_salt(result.encryption_salt);
-                            }
-                        }
-                    } else if (!local_salt.empty()) {
-                        // Server has no salt but we have local salt - upload it
-                        g_sync_mgr->upload_salt(local_salt);
-                    }
-                }
-
-                // Save mode before closing (Close() clears it)
-                g_sync_modal.Close();
-                ImGui::CloseCurrentPopup();
-            } else {
-                g_sync_modal.error_msg = result.message;
-            }
-        }
-        ImGui::EndDisabled();
-
-        ImGui::EndPopup();
-    }
-
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar(3);
-
-    if (!modal_open)
-        g_sync_modal.Close();
-}
-
 
 static const char* GetPasswordForRow(int id)
 {
@@ -2010,7 +1596,7 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
     }
 
     // Check stored KDF level (defaults to moderate for legacy vaults)
-    bool high_sec = (vault_db::get_sync_state("kdf_level") == "sensitive");
+    bool high_sec = (vault_db::get_meta("kdf_level") == "sensitive");
 
     // Derive master key from password + salt
     std::vector<uint8_t> master_key = enc::derive_master_key(password, salt, high_sec);
@@ -2070,9 +1656,6 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
     g_autosave.last_save_time = ImGui::GetTime();
     g_last_activity_time = ImGui::GetTime(); // Reset auto-lock timer
 
-    StartLocalServerIfEnabled(v);
-    propagate_sync_tokens();
-
     v.set_status("Vault unlocked.", false);
     return true;
 }
@@ -2108,8 +1691,6 @@ static void complete_2fa_unlock(const std::string& code, VaultState& v)
     g_autosave.last_save_time = ImGui::GetTime();
     g_last_activity_time = ImGui::GetTime();
 
-    StartLocalServerIfEnabled(v);
-
     v.set_status("Vault unlocked.", false);
 }
 
@@ -2133,20 +1714,8 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
         return false;
     }
 
-    // Check if server has encryption salt (for cross-device sync)
-    std::vector<uint8_t> salt;
-    if (g_sync_mgr && g_shell.sync_logged_in) {
-        if (g_sync_mgr->fetch_server_salt(salt) && salt.size() == enc::SALT_SIZE) {
-            // Use server's salt for cross-device compatibility
-        } else {
-            salt.clear();  // Will generate new below
-        }
-    }
-
-    // Generate new salt if not from server
-    if (salt.empty()) {
-        salt = enc::generate_salt();
-    }
+    // Generate new salt
+    std::vector<uint8_t> salt = enc::generate_salt();
 
     if (!vault_db::set_cached_salt(salt))
     {
@@ -2166,7 +1735,7 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
     }
 
     // Store KDF level in vault for future reference
-    vault_db::set_sync_state("kdf_level", high_sec ? "sensitive" : "moderate");
+    vault_db::set_meta("kdf_level", high_sec ? "sensitive" : "moderate");
 
     v.vault_path = path;
     v.master_key = std::move(master_key);
@@ -2583,13 +2152,9 @@ static void render_locked_screen()
     // per-tab buffers
     static std::vector<std::string> s_pw;
     static std::vector<std::string> s_cached_vaults;
-    static int s_selected_vault_idx = -1;  // >=0 = local vault, <0 = cloud vault (-(idx+1))
+    static int s_selected_vault_idx = -1;
     static std::string s_search_filter;
 
-    // Cloud vault cache
-    static std::vector<SyncManager::CloudVaultInfo> s_cloud_vaults;
-    static bool s_cloud_vaults_fetched = false;
-    static std::unordered_map<std::string, std::string> s_slug_to_path; // slug -> local .db path
 
     if ((int)s_pw.size() < (int)g_tabs.size())
         s_pw.resize(g_tabs.size());
@@ -2609,24 +2174,6 @@ static void render_locked_screen()
     if (s_cached_vaults.empty())
         s_cached_vaults = list_vaults_next_to_exe();
 
-    // Fetch cloud vaults (once per refresh cycle)
-    if (!s_cloud_vaults_fetched && g_sync_mgr && g_shell.sync_logged_in) {
-        auto result = g_sync_mgr->list_cloud_vaults();
-        if (result.success)
-            s_cloud_vaults = std::move(result.vaults);
-        else
-            s_cloud_vaults.clear();
-
-        // Build slug-to-path map by scanning local .db files
-        s_slug_to_path.clear();
-        for (const auto& db_path : s_cached_vaults) {
-            std::string slug = vault_db::read_vault_slug_from_file(db_path);
-            if (!slug.empty())
-                s_slug_to_path[slug] = db_path;
-        }
-
-        s_cloud_vaults_fetched = true;
-    }
 
     // Auto-select last opened vault (one-shot on first render)
     {
@@ -2657,7 +2204,7 @@ static void render_locked_screen()
     ImGui::Dummy(ImVec2(0, 8));
     {
         char headerBuf[128];
-        int total_vaults = (int)s_cached_vaults.size() + (int)s_cloud_vaults.size();
+        int total_vaults = (int)s_cached_vaults.size();
         snprintf(headerBuf, sizeof(headerBuf), "Vaults (%d)", total_vaults);
         ImGui::PushFont(render::FontRegular);
         ImGui::TextUnformatted(headerBuf);
@@ -2685,96 +2232,22 @@ static void render_locked_screen()
         {
             s_cached_vaults = list_vaults_next_to_exe();
             s_selected_vault_idx = -1;
-            s_cloud_vaults_fetched = false;
-            s_slug_to_path.clear();
         }
         if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Refresh vault list");
 
         ImGui::SameLine();
         ImGui::SetCursorPosY(btnY);
 
-        // Add vault (create new — cloud-aware when logged in)
+        // Add vault (create new)
         if (ui::IconButtonSquare("add_tolist", ICON_MDI_FILE_PLUS, icon, true))
         {
             if (s_pw[ti].empty())
             {
                 v.set_status("Enter a password to create a new vault.", true);
             }
-            else if (g_sync_mgr && g_shell.sync_logged_in)
-            {
-                // Cloud vault creation
-                auto salt = enc::generate_salt();
-                std::string salt_b64 = Anonbase64_encode(salt);
-                std::string slug = "vault-" + std::to_string(helpers::now_unix_ms());
-                std::string name = slug; // default name = slug
-
-                auto cr = g_sync_mgr->create_cloud_vault(slug, name, salt_b64);
-                if (cr.success)
-                {
-                    v.vault_path = new_db_path();
-
-                    // Close any previously open vault and create the .db
-                    vault_db::close();
-                    if (vault_db::init(v.vault_path))
-                    {
-                        vault_db::set_vault_slug(cr.created_slug);
-                        vault_db::set_cached_salt(salt);
-
-                        bool high_sec = cfg::get_high_security_kdf();
-                        auto master_key = enc::derive_master_key(s_pw[ti], salt, high_sec);
-                        if (!master_key.empty())
-                        {
-                            vault_db::set_sync_state("kdf_level", high_sec ? "sensitive" : "moderate");
-                            v.master_key = std::move(master_key);
-                            lock_key(v.master_key);
-                            v.session_password = s_pw[ti];
-                            lock_string(v.session_password);
-                            v.creds.clear();
-                            VaultMarkSaved(v);
-                            secure_clear_undo_stack(v.undo_stack);
-                            v.unlocked = true;
-
-                            ui::SetRepromptMasterPassword(s_pw[ti]);
-                            ui::ResetRepromptLockout();
-                            g_autosave.last_change_time = ImGui::GetTime();
-                            g_autosave.last_save_time = ImGui::GetTime();
-                            g_last_activity_time = ImGui::GetTime();
-
-                            g_sync_mgr->save_tokens_to_db();
-                            StartLocalServerIfEnabled(v);
-
-                            sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
-                            s_pw[ti].clear();
-
-                            rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
-                            ui::ForgetVaultRowState(GetActiveVaultKey());
-
-                            v.set_status("Cloud vault created.", false);
-                        }
-                        else
-                        {
-                            vault_db::close();
-                            v.set_status("Failed to derive encryption key.", true);
-                        }
-                    }
-                    else
-                    {
-                        v.set_status("Failed to create vault database.", true);
-                    }
-                }
-                else
-                {
-                    v.set_status(cr.message.empty() ? "Failed to create cloud vault." : cr.message.c_str(), true);
-                }
-
-                s_cached_vaults = list_vaults_next_to_exe();
-                s_selected_vault_idx = -1;
-                s_cloud_vaults_fetched = false;
-                s_slug_to_path.clear();
-            }
             else
             {
-                // Local-only vault creation (existing flow)
+                // Local vault creation
                 v.vault_path = new_db_path();
                 create_new_vault_on_disk(v.vault_path, s_pw[ti], v);
 
@@ -2789,8 +2262,6 @@ static void render_locked_screen()
 
                 s_cached_vaults = list_vaults_next_to_exe();
                 s_selected_vault_idx = -1;
-                s_cloud_vaults_fetched = false;
-                s_slug_to_path.clear();
             }
         }
         if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Create new vault");
@@ -2914,81 +2385,6 @@ static void render_locked_screen()
         }
     }
 
-    // Cloud vaults section (only when logged in and have cloud vaults)
-    if (!s_cloud_vaults.empty())
-    {
-        ImGui::Dummy(ImVec2(0, 4));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
-        ImGui::TextUnformatted(ICON_MDI_CLOUD " Cloud Vaults");
-        ImGui::PopStyleColor();
-        ImGui::Separator();
-
-        for (int ci = 0; ci < (int)s_cloud_vaults.size(); ci++)
-        {
-            const auto& cv = s_cloud_vaults[ci];
-
-            // Filter by search
-            if (!s_search_filter.empty() &&
-                !ImStristr(cv.vault_name.c_str(), nullptr, s_search_filter.c_str(), nullptr))
-                continue;
-
-            // Encode cloud index as negative: -(ci+1)
-            int cloud_sel_idx = -(ci + 1);
-            bool is_selected = (s_selected_vault_idx == cloud_sel_idx);
-
-            // Check if this cloud vault has a local .db
-            auto it = s_slug_to_path.find(cv.vault_slug);
-            bool has_local = (it != s_slug_to_path.end());
-
-            std::string label = ICON_MDI_CLOUD " " + cv.vault_name + "##cloud_" + std::to_string(ci);
-
-            if (ImGui::Selectable2(label.c_str(), is_selected, 0, ImVec2(0, rowH)))
-            {
-                s_selected_vault_idx = cloud_sel_idx;
-                if (has_local) {
-                    v.vault_path = it->second;
-                } else {
-                    // Will be created on unlock (Part 7)
-                    v.vault_path.clear();
-                }
-            }
-
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary)) {
-                if (has_local)
-                    ui::SetTooltipPadded("%s\n(%s)", cv.vault_name.c_str(), it->second.c_str());
-                else
-                    ui::SetTooltipPadded("%s (cloud only — will create local file on unlock)", cv.vault_name.c_str());
-            }
-
-            // Double-click unlock for cloud vaults with local .db
-            if (has_local && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
-            {
-                s_selected_vault_idx = cloud_sel_idx;
-                v.vault_path = it->second;
-
-                if (!s_pw[ti].empty())
-                {
-                    load_vault_from_disk(v.vault_path, s_pw[ti], v);
-                    if (v.unlocked)
-                    {
-                        sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
-                        s_pw[ti].clear();
-
-                        cfg::_path = v.vault_path;
-                        cfg::update_db_path();
-
-                        rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
-                        ui::ForgetVaultRowState(GetActiveVaultKey());
-                    }
-                }
-                else
-                {
-                    v.set_status("Enter password to unlock.", true);
-                }
-            }
-        }
-    }
-
     ImGui::EndChild();
 
     ImGui::Dummy(ImVec2(0, 6)); // tight spacing between list and footer
@@ -2998,9 +2394,8 @@ static void render_locked_screen()
     // ============================================================
     {
         bool hasVault = !v.vault_path.empty();
-        bool hasCloudVault = (s_selected_vault_idx < 0); // cloud vault selected (may not have local .db yet)
         bool hasPw = !s_pw[ti].empty();
-        bool canUnlock = (hasVault || hasCloudVault) && hasPw;
+        bool canUnlock = hasVault && hasPw;
 
         static bool s_show_pw = false;
 
@@ -3049,85 +2444,7 @@ static void render_locked_screen()
 
         if ((enterPressed && canUnlock) || clickUnlock)
         {
-            if (hasCloudVault && !hasVault)
-            {
-                // First-open of cloud vault with no local .db
-                int ci = -(s_selected_vault_idx + 1);
-                if (ci >= 0 && ci < (int)s_cloud_vaults.size())
-                {
-                    const auto& cv = s_cloud_vaults[ci];
-
-                    // Decode the per-vault salt
-                    auto vault_salt = base64_decode(cv.encryption_salt_b64);
-                    if (vault_salt.size() != enc::SALT_SIZE) {
-                        v.set_status("Cloud vault has invalid encryption salt.", true);
-                    }
-                    else
-                    {
-                        v.vault_path = new_db_path();
-                        vault_db::close();
-
-                        if (vault_db::init(v.vault_path))
-                        {
-                            vault_db::set_vault_slug(cv.vault_slug);
-                            vault_db::set_cached_salt(vault_salt);
-
-                            bool high_sec = cfg::get_high_security_kdf();
-                            auto master_key = enc::derive_master_key(s_pw[ti], vault_salt, high_sec);
-                            if (!master_key.empty())
-                            {
-                                vault_db::set_sync_state("kdf_level", high_sec ? "sensitive" : "moderate");
-                                v.master_key = std::move(master_key);
-                                lock_key(v.master_key);
-                                v.session_password = s_pw[ti];
-                                lock_string(v.session_password);
-                                v.creds.clear();
-                                VaultMarkSaved(v);
-                                secure_clear_undo_stack(v.undo_stack);
-                                v.unlocked = true;
-
-                                ui::SetRepromptMasterPassword(s_pw[ti]);
-                                ui::ResetRepromptLockout();
-                                g_autosave.last_change_time = ImGui::GetTime();
-                                g_autosave.last_save_time = ImGui::GetTime();
-                                g_last_activity_time = ImGui::GetTime();
-
-                                g_sync_mgr->save_tokens_to_db();
-                                StartLocalServerIfEnabled(v);
-
-                                // Pull existing credentials from server
-                                g_sync_mgr->start_background_sync();
-
-                                sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
-                                s_pw[ti].clear();
-
-                                cfg::_path = v.vault_path;
-                                cfg::update_db_path();
-
-                                rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
-                                ui::ForgetVaultRowState(GetActiveVaultKey());
-
-                                // Refresh lists to pick up new local .db
-                                s_cached_vaults = list_vaults_next_to_exe();
-                                s_cloud_vaults_fetched = false;
-                                s_slug_to_path.clear();
-
-                                v.set_status("Cloud vault opened. Syncing...", false);
-                            }
-                            else
-                            {
-                                vault_db::close();
-                                v.set_status("Failed to derive encryption key.", true);
-                            }
-                        }
-                        else
-                        {
-                            v.set_status("Failed to create vault database.", true);
-                        }
-                    }
-                }
-            }
-            else if (!v.vault_path.empty())
+            if (!v.vault_path.empty())
             {
                 load_vault_from_disk(v.vault_path, s_pw[ti], v);
                 if (v.unlocked)
@@ -3150,9 +2467,9 @@ static void render_locked_screen()
             }
         }
 
-        if (!hasVault && !hasCloudVault && ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
+        if (!hasVault && ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
             ui::SetTooltipPadded("Select a vault first.");
-        if ((hasVault || hasCloudVault) && !hasPw && ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
+        if (hasVault && !hasPw && ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
             ImGui::SetTooltip("Enter your password.");
     }
 
@@ -3397,8 +2714,6 @@ static void render_unlocked_screen()
         g_shell.footer_close_confirming = false;
         g_shell.footer_close_anyway = false;
         g_shell.footer_close_cancel = false;
-
-        propagate_sync_tokens();
     }
 
     // Now bind the correct active vault after tab switching
@@ -3467,67 +2782,14 @@ static void render_unlocked_screen()
             g_shell.sec_breach_done.store(false, std::memory_order_relaxed);
         }
 
-        // Consume share status results from background thread
-        if (g_shell.share_status_done.load(std::memory_order_acquire)) {
-            const auto& uuid = g_shell.share_status_staging_uuid;
-            if (!uuid.empty()) {
-                if (g_shell.share_status_staging.valid) {
-                    auto& cached = g_shell.share_status_cache[uuid];
-                    cached.status = g_shell.share_status_staging;
-                    cached.fetched_at_ms = helpers::now_unix_ms();
-                    cached.token = g_shell.share_status_staging_token;
-                } else {
-                    // 404 — share was deleted/expired server-side, clean up
-                    vault_db::set_sync_state("share_token:" + uuid, "");
-                    vault_db::set_sync_state("share_created:" + uuid, "");
-                    g_shell.share_status_cache.erase(uuid);
-                }
-            }
-            g_shell.share_status_done.store(false, std::memory_order_relaxed);
-        }
-
-        // Share status fetch: triggered by UI when a credential with a share token is viewed
-        if (!g_shell.share_status_request_queue.empty() && !g_shell.share_status_fetching.load()) {
-            std::string req_uuid = g_shell.share_status_request_queue.front();
-            g_shell.share_status_request_queue.erase(g_shell.share_status_request_queue.begin());
-
-            std::string token = vault_db::get_sync_state("share_token:" + req_uuid);
-            if (!token.empty()) {
-                // Check cache freshness (60s)
-                bool need_fetch = true;
-                auto it = g_shell.share_status_cache.find(req_uuid);
-                if (it != g_shell.share_status_cache.end()) {
-                    int64_t age_ms = helpers::now_unix_ms() - it->second.fetched_at_ms;
-                    if (age_ms < 60000) need_fetch = false;
-                }
-
-                if (need_fetch && g_sync_mgr) {
-                    g_shell.share_status_fetching.store(true);
-                    std::thread([req_uuid, token]() {
-                        auto result = g_sync_mgr->get_share_status(token);
-                        ui::ShellState::ShareStatusInfo info;
-                        info.valid           = result.valid;
-                        info.view_count      = result.view_count;
-                        info.max_views       = result.max_views;
-                        info.expired         = result.expired;
-                        info.views_exhausted = result.views_exhausted;
-                        info.expires_at_ms   = result.expires_at_ms;
-                        info.created_at_ms   = result.created_at_ms;
-
-                        g_shell.share_status_staging_uuid  = req_uuid;
-                        g_shell.share_status_staging       = info;
-                        g_shell.share_status_staging_token = token;
-                        g_shell.share_status_done.store(true, std::memory_order_release);
-                        g_shell.share_status_fetching.store(false, std::memory_order_release);
-                    }).detach();
-                }
-            }
-        }
-
-        // Breach check: triggered by user "Check Now" button
+        // Breach check: triggered by user "Check Now" button.
+        // Offline-first: only contacts api.pwnedpasswords.com if the user opted in.
         if (g_shell.sec_breach_trigger && !g_shell.sec_breach_checking) {
             g_shell.sec_breach_trigger = false;
-            CheckBreachedPasswords(g_shell, v.creds);
+            if (cfg::get_online_breach_check())
+                CheckBreachedPasswords(g_shell, v.creds);
+            else
+                g_shell.sec_breach_error = "Online breach check is disabled. Enable it in Settings > Security > Network & Privacy.";
         }
     }
 
@@ -3801,334 +3063,7 @@ static void render_unlocked_screen()
     }
 
 
-    // ============================================================
-    // Sync intents
-    // ============================================================
-    if (g_shell.sync_login_clicked) {
-        init_sync_manager();
-        g_sync_modal.Openlogin(g_shell.sync_server_url);
-        ImGui::OpenPopup("Sign In###sync_modal");
-        g_shell.sync_login_clicked = false;
-    }
 
-    if (g_shell.sync_now_clicked) {
-        // Update sync status message (visible on Settings screen)
-        g_shell.sync_status = 1;  // Connecting
-        g_shell.sync_status_msg = "Starting sync...";
-
-        init_sync_manager();
-        if (!g_sync_mgr) {
-            g_shell.sync_status = 6;  // Error
-            g_shell.sync_status_msg = "Sync manager not initialized.";
-        } else if (!g_shell.sync_logged_in) {
-            g_shell.sync_status = 6;
-            g_shell.sync_status_msg = "Not logged in.";
-        } else if (!vault_db::is_open()) {
-            g_shell.sync_status = 6;
-            g_shell.sync_status_msg = "Vault database not open.";
-        } else {
-            g_shell.sync_status = 1;  // Connecting
-            g_shell.sync_status_msg = "Checking salt...";
-
-            // Debug: get raw hex string first
-            std::string raw_hex = vault_db::get_sync_state("encryption_salt");
-            auto local_salt = vault_db::get_cached_salt();
-
-            std::string vault_slug = vault_db::get_vault_slug();
-            bool can_sync = false;
-
-            if (!vault_slug.empty()) {
-                // Named vault: salt was set at creation. Skip user-level salt endpoint.
-                if (local_salt.size() == enc::SALT_SIZE) {
-                    can_sync = true;
-                } else {
-                    g_shell.sync_status = 6;
-                    g_shell.sync_status_msg = "Named vault missing salt.";
-                }
-            } else {
-            // Default vault: existing FetchServerSalt flow
-            std::vector<uint8_t> server_salt;
-            bool server_has_salt = g_sync_mgr->fetch_server_salt(server_salt);
-
-            // Update status with detailed salt info
-            char salt_msg[256];
-            snprintf(salt_msg, sizeof(salt_msg), "Hex len: %zu, Bytes: %zu, Server: %s",
-                raw_hex.size(), local_salt.size(), server_has_salt ? "yes" : "no");
-            g_shell.sync_status_msg = salt_msg;
-
-            if (server_has_salt && !server_salt.empty()) {
-                // Server has salt - use it if different from local
-                if (local_salt != server_salt) {
-                    if (v.unlocked && !v.session_password.empty() && !v.master_key.empty()) {
-                        auto new_key = enc::derive_master_key(v.session_password, server_salt);
-                        if (!new_key.empty()) {
-                            auto old_key = std::move(v.master_key);
-                            v.master_key = std::move(new_key);
-                            vault_db::set_cached_salt(server_salt);
-
-                            // Re-encrypt all credentials with new key
-                            bool re_encrypt_ok = true;
-                            for (auto& c : v.creds) {
-                                if (!cred_ops::update(c.uuid, c, v.master_key)) {
-                                    re_encrypt_ok = false;
-                                    break;
-                                }
-                                c.is_dirty = true;
-                            }
-
-                            if (re_encrypt_ok) {
-                                enc::secure_zero(old_key);
-
-                                // Re-encrypt recovery blob if present
-                                if (vault_db::has_recovery_key()) {
-                                    auto rec_blob = vault_db::get_recovery_blob();
-                                    // Recovery blob was encrypted with old master key hex
-                                    // We can't re-encrypt it without the recovery key itself
-                                    // so we must delete it — user loses recovery until next vault creation
-                                    vault_db::delete_recovery_blob();
-                                }
-
-                                can_sync = true;
-                            } else {
-                                // Rollback
-                                v.master_key = std::move(old_key);
-                                vault_db::set_cached_salt(local_salt);
-                                g_shell.sync_status = 6;
-                                g_shell.sync_status_msg = "Salt migration failed: re-encryption error.";
-                            }
-                        } else {
-                            g_shell.sync_status = 6;
-                            g_shell.sync_status_msg = "Failed to derive key.";
-                        }
-                    } else {
-                        // Vault locked or no password — just adopt server salt
-                        // (credentials will fail to decrypt until re-created)
-                        vault_db::set_cached_salt(server_salt);
-                        can_sync = true;
-                    }
-                } else {
-                    can_sync = true;
-                }
-            } else if (!local_salt.empty() && local_salt.size() == enc::SALT_SIZE) {
-                // Valid 32-byte salt - upload it
-                char size_msg[64];
-                snprintf(size_msg, sizeof(size_msg), "Uploading salt (%zu bytes)...", local_salt.size());
-                g_shell.sync_status_msg = size_msg;
-
-                std::string upload_error;
-                if (g_sync_mgr->upload_salt_with_error(local_salt, upload_error)) {
-                    can_sync = true;
-                } else {
-                    g_shell.sync_status = 6;
-                    char err_msg[128];
-                    snprintf(err_msg, sizeof(err_msg), "Salt upload failed (%zu bytes): %s",
-                        local_salt.size(), upload_error.c_str());
-                    g_shell.sync_status_msg = err_msg;
-                }
-            } else if (!local_salt.empty() && local_salt.size() != enc::SALT_SIZE) {
-                // Corrupted salt (wrong size) - attempt migration if vault is unlocked
-                if (v.unlocked && !v.session_password.empty() && !v.master_key.empty()) {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "Fixing corrupted salt (%zu->%zu bytes)...", local_salt.size(), enc::SALT_SIZE);
-                    g_shell.sync_status_msg = msg;
-
-                    // Generate proper salt
-                    auto new_salt = enc::generate_salt();
-                    auto new_key = enc::derive_master_key(v.session_password, new_salt);
-
-                    if (!new_key.empty()) {
-                        vault_db::set_cached_salt(new_salt);
-                        auto old_key = std::move(v.master_key);
-                        v.master_key = std::move(new_key);
-
-                        bool re_encrypt_ok = true;
-                        for (auto& c : v.creds) {
-                            if (!cred_ops::update(c.uuid, c, v.master_key)) {
-                                re_encrypt_ok = false;
-                                break;
-                            }
-                            c.is_dirty = true;
-                        }
-
-                        if (re_encrypt_ok) {
-                            enc::secure_zero(old_key);
-                            local_salt = new_salt;
-                            g_shell.sync_status_msg = "Salt fixed, uploading...";
-
-                            std::string upload_error;
-                            if (g_sync_mgr->upload_salt_with_error(local_salt, upload_error)) {
-                                can_sync = true;
-                            } else {
-                                g_shell.sync_status = 6;
-                                char err_msg[128];
-                                snprintf(err_msg, sizeof(err_msg), "Salt upload failed: %s", upload_error.c_str());
-                                g_shell.sync_status_msg = err_msg;
-                            }
-                        } else {
-                            v.master_key = std::move(old_key);
-                            g_shell.sync_status = 6;
-                            g_shell.sync_status_msg = "Migration failed: re-encryption error.";
-                        }
-                    } else {
-                        g_shell.sync_status = 6;
-                        g_shell.sync_status_msg = "Migration failed: key derivation error.";
-                    }
-                } else {
-                    g_shell.sync_status = 6;
-                    char err_msg[128];
-                    snprintf(err_msg, sizeof(err_msg), "Corrupted salt (%zu bytes). Unlock vault to fix.", local_salt.size());
-                    g_shell.sync_status_msg = err_msg;
-                }
-            } else {
-                // No local salt found - attempt recovery if vault is unlocked
-                if (v.unlocked && !v.session_password.empty() && !v.master_key.empty()) {
-                    g_shell.sync_status_msg = "Migrating vault for sync...";
-
-                    // Generate new salt
-                    auto new_salt = enc::generate_salt();
-                    auto new_key = enc::derive_master_key(v.session_password, new_salt);
-
-                    if (!new_key.empty()) {
-                        // Store new salt first
-                        vault_db::set_cached_salt(new_salt);
-                        // Update in-memory key
-                        auto old_key = std::move(v.master_key);
-                        v.master_key = std::move(new_key);
-
-                        // Re-encrypt all credentials with new key
-                        bool re_encrypt_ok = true;
-                        for (auto& c : v.creds) {
-                            // c.password already has plaintext from load_all()
-                            // Just update in DB with new key
-                            if (!cred_ops::update(c.uuid, c, v.master_key)) {
-                                re_encrypt_ok = false;
-                                break;
-                            }
-                            c.is_dirty = true;  // Mark for sync
-                        }
-
-                        if (re_encrypt_ok) {
-                            enc::secure_zero(old_key);
-                            local_salt = new_salt;
-                            g_shell.sync_status_msg = "Migration complete, uploading salt...";
-
-                            // Now upload the new salt
-                            std::string upload_error;
-                            if (g_sync_mgr->upload_salt_with_error(local_salt, upload_error)) {
-                                can_sync = true;
-                            } else {
-                                g_shell.sync_status = 6;
-                                char err_msg[128];
-                                snprintf(err_msg, sizeof(err_msg), "Salt upload failed: %s", upload_error.c_str());
-                                g_shell.sync_status_msg = err_msg;
-                            }
-                        } else {
-                            // Re-encryption failed - restore old key
-                            v.master_key = std::move(old_key);
-                            g_shell.sync_status = 6;
-                            g_shell.sync_status_msg = "Migration failed: re-encryption error.";
-                        }
-                    } else {
-                        g_shell.sync_status = 6;
-                        g_shell.sync_status_msg = "Migration failed: key derivation error.";
-                    }
-                } else {
-                    g_shell.sync_status = 6;
-                    char err_msg[256];
-                    snprintf(err_msg, sizeof(err_msg), "No salt (hex=%zu). Unlock vault first.", raw_hex.size());
-                    g_shell.sync_status_msg = err_msg;
-                }
-            }
-            } // end default vault salt flow
-
-            if (can_sync) {
-                g_shell.sync_status = 3;  // Uploading
-                g_shell.sync_status_msg = "Syncing...";
-                g_sync_mgr->start_background_sync();
-            }
-        }
-        g_shell.sync_now_clicked = false;
-    }
-
-    if (g_shell.sync_logout_clicked) {
-        if (g_sync_mgr) {
-            g_sync_mgr->logout();
-        }
-        g_shell.sync_logged_in = false;
-        g_shell.sync_username.clear();
-        g_shell.sync_status = 0;  // Idle
-        g_shell.sync_status_msg.clear();
-        g_shell.sync_logout_clicked = false;
-    }
-
-    // ============================================================
-    // Local extension server toggle
-    // ============================================================
-    if (g_shell.local_server_toggled)
-    {
-        g_shell.local_server_toggled = false;
-
-        if (g_shell.local_server_enabled && v.unlocked)
-        {
-            // Start the server now
-            StartLocalServerIfEnabled(v);
-        }
-        else if (!g_shell.local_server_enabled && g_local_server.IsRunning())
-        {
-            // Stop the server now
-            g_local_server.Stop();
-        }
-    }
-
-    // ============================================================
-    // Pairing management
-    // ============================================================
-    if (g_shell.pair_browser_clicked)
-    {
-        g_shell.pair_browser_clicked = false;
-        if (g_local_server.IsRunning())
-        {
-            std::string code = g_local_server.GeneratePairingCode();
-            g_shell.pairing_code_display = code;
-            g_shell.show_pairing_code = true;
-            g_shell.pairing_code_timer = 120.0f; // 2 minutes
-        }
-    }
-
-    if (!g_shell.revoke_pairing_id.empty())
-    {
-        g_local_server.RevokePairing(g_shell.revoke_pairing_id);
-        g_shell.revoke_pairing_id.clear();
-    }
-
-    // Update paired browsers list for UI display
-    if (g_local_server.IsRunning())
-    {
-        auto pairings = g_local_server.GetPairings();
-        g_shell.paired_browsers.clear();
-        g_shell.paired_browsers.reserve(pairings.size());
-        for (const auto& p : pairings)
-        {
-            ui::ShellState::PairedBrowserInfo info;
-            info.full_id = p.id;
-            info.id_short = p.id.substr(0, 8);
-            // Format paired_at as date
-            if (p.paired_at > 0)
-            {
-                time_t t = (time_t)p.paired_at;
-                struct tm tm_buf;
-                localtime_s(&tm_buf, &t);
-                char date_str[32];
-                strftime(date_str, sizeof(date_str), "%Y-%m-%d", &tm_buf);
-                info.paired_date = date_str;
-            }
-            g_shell.paired_browsers.push_back(std::move(info));
-        }
-    }
-    else
-    {
-        g_shell.paired_browsers.clear();
-    }
 
     // ============================================================
     // CSV Export
@@ -4777,89 +3712,8 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // Share Vault intent
-    // ============================================================
-    {
-        // Thread-safe result buffer (bg thread writes, main thread reads once done)
-        static std::atomic<bool> s_vault_share_busy{false};
-        static std::atomic<bool> s_vault_share_done{false};
-        static std::string s_vault_share_url;
-        static std::string s_vault_share_err;
-
-        // Poll for completed background share
-        if (s_vault_share_done.load())
-        {
-            s_vault_share_done = false;
-            g_shell.share_loading = false;
-            if (!s_vault_share_url.empty())
-                g_shell.share_result_url = s_vault_share_url;
-            else
-                g_shell.share_error = s_vault_share_err;
-            s_vault_share_url.clear();
-            s_vault_share_err.clear();
-        }
-
-        // Dispatch new share request
-        if (g_shell.show_share_vault_modal && g_shell.share_loading && !s_vault_share_busy.load())
-        {
-            // Filter credentials by scope
-            std::vector<Credential> to_share;
-            for (const auto& c : v.creds)
-            {
-                if (c.is_deleted()) continue;
-
-                if (g_shell.share_scope == 0)
-                {
-                    to_share.push_back(c);
-                }
-                else if (g_shell.share_scope == 1)
-                {
-                    if (c.group == g_shell.share_scope_value)
-                        to_share.push_back(c);
-                }
-                else if (g_shell.share_scope == 2)
-                {
-                    if (CredTypeLabel(c.type) == g_shell.share_scope_value)
-                        to_share.push_back(c);
-                }
-            }
-
-            if (to_share.empty())
-            {
-                g_shell.share_loading = false;
-                g_shell.share_error = "No credentials match the selected scope";
-            }
-            else
-            {
-                static const int expiry_seconds[] = { 3600, 86400, 604800, 2592000 };
-                int exp_sec = expiry_seconds[ImClamp(g_shell.share_expiry, 0, 3)];
-
-                static const int max_views_vals[] = { 0, 1, 5, 10 };
-                int max_views = max_views_vals[ImClamp(g_shell.share_max_views, 0, 3)];
-
-                std::string passphrase(g_shell.share_passphrase);
-                std::string bundle_name = ActiveTab().label;
-
-                s_vault_share_busy = true;
-                std::thread([bundle_name, to_share, exp_sec, max_views, passphrase]() {
-                    auto result = g_sync_mgr->share_vault_anon(to_share, bundle_name, exp_sec, max_views, passphrase);
-                    if (result.success)
-                        s_vault_share_url = result.url;
-                    else
-                        s_vault_share_err = result.error;
-                    s_vault_share_busy = false;
-                    s_vault_share_done = true;
-                }).detach();
-            }
-        }
-    }
-
     // Render Credential modal (Add/Edit)
     render_credential_modal(v);
-
-    // Render sync modal (Login/Register)
-    render_sync_modal();
 
     // Render re-prompt modal (security)
     ui::RenderRepromptModal();
@@ -5070,30 +3924,6 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // Handle anonymous share request
-    // ============================================================
-    if (render_list && r.anon_share_id != -1)
-    {
-        if (g_sync_mgr && g_sync_mgr->is_logged_in())
-        {
-            for (const auto& c : v.creds)
-            {
-                if (c.id == r.anon_share_id)
-                {
-                    g_anon_share.Reset();
-                    g_anon_share.cred = c;
-                    g_anon_share.password = c.password;
-                    ImGui::OpenPopup("Share Credential###anon_share_modal");
-                    break;
-                }
-            }
-        }
-        else
-        {
-            ui::ShowToast("Sign in to share credentials", ui::ToastType::Error);
-        }
-    }
 
     // ============================================================
     // BULK INTENTS
@@ -5381,217 +4211,6 @@ static void render_unlocked_screen()
         v.set_status("Saved changes (in memory). Ctrl+S to write to disk.", false);
     }
 
-    // ============================================================
-    // Anonymous Share Modal
-    // ============================================================
-    {
-        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-        const bool dark = g_shell.dark_theme;
-        const ImU32 popupBg = dark ? theme::ModalBg.dark : theme::ModalBg.light;
-        const ImU32 dimBg   = colors::DimOverlayLight;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
-        ImGui::PushStyleColor(ImGuiCol_PopupBg, popupBg);
-        ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, dimBg);
-
-        ImGui::SetNextWindowSizeConstraints(ImVec2(420, 0), ImVec2(420, FLT_MAX));
-        bool modal_open = true;
-        if (ImGui::BeginPopupModal("Share Credential###anon_share_modal", &modal_open,
-            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
-        {
-            bool escape_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
-
-            // Header with close button
-            ImGui::TextUnformatted(ICON_MDI_SHARE_VARIANT "  Share Credential");
-            {
-                float closeSize = ImGui::GetFrameHeight();
-                ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - closeSize);
-                if (ui::StyledButton("##share_close", ICON_MDI_CLOSE, ImVec2(closeSize, closeSize)) || escape_pressed)
-                {
-                    ui::ReleaseShareQRTexture();
-                    g_anon_share.Reset();
-                    ImGui::CloseCurrentPopup();
-                }
-            }
-            ImGui::Dummy(ImVec2(0, 8));
-
-            static const char* expiry_labels[] = { "1 hour", "24 hours", "7 days", "30 days", "Never" };
-            static const char* views_labels[] = { "1 view", "5 views", "10 views", "Unlimited" };
-
-            switch (g_anon_share.step)
-            {
-            case AnonShareModal::Step::Config:
-            {
-                ImGui::TextWrapped("Create a shareable link for this credential. "
-                    "The encryption key stays in the URL fragment and is never sent to the server.");
-                ImGui::Dummy(ImVec2(0, 8));
-
-                ImGui::TextDisabled("Credential:");
-                ImGui::SameLine();
-                ImGui::TextUnformatted(g_anon_share.cred.title.c_str());
-                ImGui::Dummy(ImVec2(0, 8));
-
-                ImGui::TextDisabled("Expires after");
-                ui::AnimatedComboDot("##share_expiry",
-                    expiry_labels[g_anon_share.expiry_idx],
-                    expiry_labels, IM_ARRAYSIZE(expiry_labels),
-                    &g_anon_share.expiry_idx, 120.0f, 30.0f);
-
-                ImGui::Dummy(ImVec2(0, 4));
-
-                ImGui::TextDisabled("Max views");
-                ui::AnimatedComboDot("##share_views",
-                    views_labels[g_anon_share.views_idx],
-                    views_labels, IM_ARRAYSIZE(views_labels),
-                    &g_anon_share.views_idx, 120.0f, 30.0f);
-
-                ImGui::Dummy(ImVec2(0, 8));
-
-                if (ui::StyledButton("##create_share_link", ICON_MDI_SHARE_VARIANT " Create Link", ImVec2(-1, 32), 4.0f))
-                {
-                    g_anon_share.step = AnonShareModal::Step::Creating;
-                    g_anon_share.creating = true;
-                    std::thread(DoCreateAnonShare).detach();
-                }
-                break;
-            }
-            case AnonShareModal::Step::Creating:
-            {
-                ImGui::TextUnformatted("Creating share link...");
-                ImGui::Dummy(ImVec2(0, 4));
-                float spinner_radius = 8.0f;
-                ImVec2 pos = ImGui::GetCursorScreenPos();
-                float t = (float)ImGui::GetTime();
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-                ImU32 col = ImGui::GetColorU32(ImGuiCol_Text);
-                float a_start = t * 3.0f;
-                dl->PathArcTo(ImVec2(pos.x + spinner_radius + 4, pos.y + spinner_radius),
-                    spinner_radius, a_start, a_start + IM_PI * 1.5f, 12);
-                dl->PathStroke(col, false, 2.0f);
-                ImGui::Dummy(ImVec2(spinner_radius * 2 + 8, spinner_radius * 2));
-                break;
-            }
-            case AnonShareModal::Step::Done:
-            {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Share link created!");
-                ImGui::Dummy(ImVec2(0, 8));
-
-                ImGui::TextDisabled("Share URL:");
-                ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 4));
-                ImGui::TextWrapped("%s", g_anon_share.share_url.c_str());
-                ImGui::PopStyleVar();
-
-                ImGui::Dummy(ImVec2(0, 8));
-
-                if (ui::StyledButton("##copy_share_url", ICON_MDI_CONTENT_COPY " Copy URL", ImVec2(-1, 30), 4.0f))
-                {
-                    ImGui::SetClipboardText(g_anon_share.share_url.c_str());
-                    ui::ShowToast("Share URL copied!", ui::ToastType::Success);
-                }
-
-                ImGui::Dummy(ImVec2(0, 8));
-
-                // QR Code
-                ImTextureID qr_tex = ui::GetShareQRTexture();
-                if (!qr_tex && !g_anon_share.share_url.empty())
-                {
-                    ui::CreateShareQRTexture(g_anon_share.share_url);
-                    qr_tex = ui::GetShareQRTexture();
-                }
-                if (qr_tex)
-                {
-                    float qr_display_size = 200.0f;
-                    float avail = ImGui::GetContentRegionAvail().x;
-                    float offset = (avail - qr_display_size) * 0.5f;
-                    if (offset > 0) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset);
-                    ImGui::Image(qr_tex, ImVec2(qr_display_size, qr_display_size));
-                }
-                break;
-            }
-            case AnonShareModal::Step::Error:
-            {
-                ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Error");
-                ImGui::TextWrapped("%s", g_anon_share.error_msg.c_str());
-                ImGui::Dummy(ImVec2(0, 8));
-
-                if (ui::StyledButton("##retry_share", ICON_MDI_REFRESH " Try Again", ImVec2(-1, 30), 4.0f))
-                {
-                    g_anon_share.step = AnonShareModal::Step::Config;
-                    g_anon_share.error_msg.clear();
-                }
-                break;
-            }
-            }
-
-            ImGui::EndPopup();
-        }
-        ImGui::PopStyleColor(2);
-        ImGui::PopStyleVar(3);
-
-        // Cleanup when modal is closed
-        if (!modal_open && g_anon_share.step != AnonShareModal::Step::Config)
-        {
-            ui::ReleaseShareQRTexture();
-            g_anon_share.Reset();
-        }
-    }
-
-    // ============================================================
-    // External Credential change (from browser extension save)
-    // ============================================================
-    if (g_local_server.IsRunning() && g_local_server.HasExternalChange()) {
-        g_local_server.ClearExternalChange();
-        VaultState& ev = ActiveVault();
-        if (ev.unlocked && !ev.master_key.empty()) {
-            ev.creds = cred_ops::load_all(ev.master_key);
-            rebuild_groups(g_shell, ev.creds); rebuild_tags(g_shell, ev.creds);
-            ui::ForgetVaultRowState(GetActiveVaultKey());
-            g_local_server.UpdateCredentials(ev.creds);
-        }
-    }
-
-    // ============================================================
-    // Vault switch (from browser extension vault selector)
-    // ============================================================
-    if (g_local_server.IsRunning() && g_local_server.HasVaultSwitch()) {
-        auto info = g_local_server.ConsumeVaultSwitch();
-        VaultState& sv = ActiveVault();
-
-        // Close current vault and open the new one
-        vault_db::close();
-        if (vault_db::init(info.vault_path)) {
-            sv.creds = cred_ops::load_all(info.master_key);
-            sv.vault_path = info.vault_path;
-            sv.master_key = info.master_key;
-            sv.session_password = info.password;
-            sv.unlocked = true;
-
-            // Update tab label
-            ActiveTab().label = std::filesystem::path(info.vault_path).stem().string();
-
-            VaultMarkSaved(sv);
-            rebuild_groups(g_shell, sv.creds); rebuild_tags(g_shell, sv.creds);
-            ui::ForgetVaultRowState(GetActiveVaultKey());
-
-            // Sync server state
-            g_local_server.SetMasterKey(info.master_key);
-            g_local_server.SetSalt(info.salt);
-            g_local_server.UpdateCredentials(sv.creds);
-            g_local_server.SetActiveVaultPath(info.vault_path);
-
-            // Update config for auto-open
-            cfg::_path = info.vault_path;
-            cfg::update_db_path();
-
-            ui::SetRepromptMasterPassword(info.password);
-            ui::ResetRepromptLockout();
-
-            sv.set_status("Vault switched.", false);
-        }
-    }
 
     // ============================================================
     // Autosave tick + Auto-lock tick + end shell
@@ -5716,9 +4335,6 @@ static void render_unlocked_screen()
         g_shell.sec_center_open = false;
         g_cred_modal.Close();
         ImGui::ClosePopupsOverWindow(ImGui::GetCurrentWindow(), true);
-
-        // Stop extension server before closing vault
-        g_local_server.Stop();
 
         VaultState& vv = ActiveVault();
         uint32_t vk = GetActiveVaultKey();

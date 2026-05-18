@@ -17,6 +17,7 @@
 #include <unordered_set>
 #include <vector>
 #include <mutex>
+#include <atomic>
 #include <thread>
 #include <string>
 #include <algorithm>
@@ -32,6 +33,7 @@ static std::mutex                                                 s_mutex;
 static std::vector<std::pair<std::string, std::vector<uint8_t>>>  s_fetched; // completed fetches for main thread
 static std::string                                                s_cache_dir;
 static bool                                                       s_initialized = false;
+static std::atomic<bool>                                          s_network_enabled{ false }; // offline-first
 
 // ---- Helpers ----
 
@@ -252,6 +254,17 @@ std::string ExtractDomain(const std::string& url)
     return s;
 }
 
+static void LoadBundled()
+{
+    for (int i = 0; i < s_bundled_favicon_count; i++)
+    {
+        const auto& b = s_bundled_favicons[i];
+        auto* srv = CreateTextureFromMemory(b.data, b.size);
+        if (srv)
+            s_cache[b.domain] = srv;
+    }
+}
+
 void Init()
 {
     if (s_initialized) return;
@@ -260,14 +273,60 @@ void Init()
     s_cache_dir = GetCacheDir();
     std::filesystem::create_directories(s_cache_dir);
 
-    // Load bundled favicons
-    for (int i = 0; i < s_bundled_favicon_count; i++)
+    LoadBundled();
+}
+
+void SetNetworkEnabled(bool enabled)
+{
+    s_network_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool IsNetworkEnabled()
+{
+    return s_network_enabled.load(std::memory_order_relaxed);
+}
+
+CacheStats GetCacheStats()
+{
+    CacheStats st;
+    if (s_cache_dir.empty()) return st;
+    std::error_code ec;
+    if (!std::filesystem::exists(s_cache_dir, ec)) return st;
+    for (std::filesystem::directory_iterator it(s_cache_dir, ec), end; it != end; it.increment(ec))
     {
-        const auto& b = s_bundled_favicons[i];
-        auto* srv = CreateTextureFromMemory(b.data, b.size);
-        if (srv)
-            s_cache[b.domain] = srv;
+        if (ec) break;
+        if (!it->is_regular_file(ec)) continue;
+        if (it->path().extension() != ".png") continue;
+        st.file_count++;
+        st.total_bytes += (uint64_t)it->file_size(ec);
     }
+    return st;
+}
+
+void ClearCache()
+{
+    // Delete on-disk .png cache files
+    if (!s_cache_dir.empty())
+    {
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(s_cache_dir, ec), end; it != end; it.increment(ec))
+        {
+            if (ec) break;
+            if (it->path().extension() == ".png")
+                std::filesystem::remove(it->path(), ec);
+        }
+    }
+
+    // Drop in-memory state, then reload bundled icons (those have no disk file)
+    {
+        std::lock_guard<std::mutex> lock(s_mutex);
+        s_pending.clear();
+        s_fetched.clear();
+    }
+    for (auto& [domain, srv] : s_cache)
+        if (srv) srv->Release();
+    s_cache.clear();
+    if (s_initialized) LoadBundled();
 }
 
 void Shutdown()
@@ -311,6 +370,11 @@ ID3D11ShaderResourceView* Get(const std::string& website)
         s_cache[domain] = srv;
         return srv;
     }
+
+    // Offline-first: never hit the network unless the user opted in.
+    // Bundled + disk-cached icons (handled above) still work when disabled.
+    if (!s_network_enabled.load(std::memory_order_relaxed))
+        return nullptr;
 
     // Request async fetch
     {

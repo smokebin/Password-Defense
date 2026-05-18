@@ -1,0 +1,21 @@
+# Visual Studio IDE cache
+.vs/
+
+# Build output directories
+[Bb]in/
+[Oo]bj/
+PasswordDefense/x64/
+
+# Build artifacts
+*.obj
+*.iobj
+*.ipdb
+*.ilk
+*.tlog
+*.lastbuildstate
+*.recipe
+*.log
+*.sarif
+
+# Claude Code CLI binary (do not commit)
+claude.exe

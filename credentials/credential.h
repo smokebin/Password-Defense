@@ -64,10 +64,6 @@ struct Credential
     int64_t     updated_at_ms = 0;
     int64_t     deleted_at_ms = 0;  // 0 = not deleted, else Unix ms when deleted
 
-    // Sync state
-    int64_t     server_rev = 0;     // Server revision number (0 = never synced)
-    bool        is_dirty = true;    // Local changes pending sync
-
     // Helper methods
     bool is_deleted() const { return deleted_at_ms != 0; }
 };
