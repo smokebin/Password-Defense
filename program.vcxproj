@@ -209,7 +209,6 @@
     <ClInclude Include="tools\utility.h" />
     <ClInclude Include="tools\totp.h" />
     <ClInclude Include="tools\qrcodegen.hpp" />
-    <ClInclude Include="tools\xor.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resources.rc" />
