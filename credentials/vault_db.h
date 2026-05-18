@@ -120,27 +120,18 @@ namespace vault_db {
     );
 
     // ============================================================
-    // Key-value sync state storage
+    // Key-value metadata (stored in pm_sync_state table)
     // ============================================================
 
-    std::string get_sync_state(const std::string& key);
-    bool set_sync_state(const std::string& key, const std::string& value);
+    std::string get_meta(const std::string& key);
+    bool set_meta(const std::string& key, const std::string& value);
 
-    // Server revision tracking
-    int64_t get_last_server_rev();
-    bool set_last_server_rev(int64_t rev);
-
+    // ============================================================
     // Salt caching
+    // ============================================================
+
     std::vector<uint8_t> get_cached_salt();
     bool set_cached_salt(const std::vector<uint8_t>& salt);
-
-    // Cloud vault slug (identifies which server-side vault this .db maps to)
-    std::string get_vault_slug();
-    bool set_vault_slug(const std::string& slug);
-
-    // Read vault_slug from a .db file without changing the active connection
-    // Opens a temporary read-only connection, reads pm_sync_state, closes it
-    std::string read_vault_slug_from_file(const std::string& db_path);
 
     // ============================================================
     // Transaction helpers

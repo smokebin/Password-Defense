@@ -195,18 +195,9 @@ namespace ui
         bool start_minimized = false;     // Start hidden in tray (requires minimize_to_tray)
         bool auto_open_vault = true;      // Auto-select last opened vault on startup
 
-        // Sync state
-        std::string sync_server_url;
-        std::string sync_username;
-        bool sync_logged_in = false;
-        int  sync_status = 0;             // 0=Idle, 1=Connecting, 2=Auth, 3=Push, 4=Pull, 5=Success, 6=Error, 7=Offline
-        std::string sync_status_msg;
-        int64_t last_sync_ms = 0;
-
-        // Sync intents (one-frame)
-        bool sync_login_clicked = false;
-        bool sync_now_clicked = false;
-        bool sync_logout_clicked = false;
+        // Network & privacy (offline-first — both default OFF)
+        bool online_favicons = false;     // Allow fetching website icons over the internet
+        bool online_breach_check = false; // Allow HIBP k-anonymity breach check
 
         // Screen navigation
         Screen active_screen = Screen::Locked;  // Start with locked screen
@@ -323,33 +314,6 @@ namespace ui
         std::string             sec_breach_error_staging;
         std::atomic<bool>       sec_breach_done{false};  // true when background thread has results ready
 
-        // Share status cache (keyed by credential UUID)
-        struct ShareStatusInfo {
-            bool    valid = false;
-            int     view_count = 0;
-            int     max_views = 0;       // 0 = unlimited
-            bool    expired = false;
-            bool    views_exhausted = false;
-            int64_t expires_at_ms = 0;   // 0 = never
-            int64_t created_at_ms = 0;
-        };
-        struct CachedShareStatus {
-            ShareStatusInfo status;
-            int64_t fetched_at_ms = 0;
-            std::string token;
-        };
-        std::unordered_map<std::string, CachedShareStatus> share_status_cache;
-        std::atomic<bool> share_status_fetching{false};
-
-        // Share status request queue (set by UI, consumed by app layer)
-        std::vector<std::string> share_status_request_queue;
-
-        // Share status staging (written by background thread, consumed on main thread)
-        std::string share_status_staging_uuid;
-        ShareStatusInfo share_status_staging;
-        std::string share_status_staging_token;
-        std::atomic<bool> share_status_done{false};
-
         // 2FA setup state
         bool twofa_setup_open = false;
 
@@ -368,35 +332,6 @@ namespace ui
         bool recovery_key_modal_open = false;
         std::string recovery_key_display;    // hex with dashes, cleared after modal close
 
-        // Local extension server
-        bool local_server_enabled = false;
-        int  local_server_port = 19837;
-        bool local_server_toggled = false;  // one-frame intent when toggle flipped
-
-        // Pairing management
-        bool pair_browser_clicked = false;          // one-frame intent
-        bool show_pairing_code = false;             // show the code display
-        std::string pairing_code_display;           // the generated code
-        float pairing_code_timer = 0.0f;            // countdown seconds remaining
-        std::string revoke_pairing_id;              // one-frame intent: pairing to revoke
-
-        // Vault share modal
-        bool show_share_vault_modal = false;
-        int share_scope = 0;              // 0=All, 1=By Group, 2=By Type
-        std::string share_scope_value;    // group name or type name
-        int share_expiry = 1;             // 0=1h, 1=24h, 2=7d, 3=30d
-        int share_max_views = 0;          // 0=unlimited, 1=1, 2=5, 3=10
-        char share_passphrase[128] = {};
-        bool share_loading = false;
-        std::string share_result_url;     // generated URL
-        std::string share_error;
-
-        struct PairedBrowserInfo {
-            std::string full_id;     // full pairing UUID
-            std::string id_short;    // first 8 chars
-            std::string paired_date; // human-readable date
-        };
-        std::vector<PairedBrowserInfo> paired_browsers;  // populated by app layer
     };
 
     // App Style Editor (color customization window)
@@ -606,7 +541,7 @@ namespace ui
         int edit_open_id = -1;  // ID of Credential to open in edit page
         int toggle_pin_id = -1;  // ID of Credential to toggle pin
         int toggle_fav_id = -1;  // ID of Credential to toggle favorite
-        int anon_share_id = -1;  // ID of Credential to share anonymously
+
         AccordionItem edited{};
         std::string edited_password{};
     };
@@ -681,13 +616,5 @@ namespace ui
 
     // Set master password for re-prompt verification (call from app when vault unlocks)
     void SetRepromptMasterPassword(const std::string& password);
-
-    // ============================================================
-    // Share QR texture (separate from 2FA QR)
-    // ============================================================
-    void CreateShareQRTexture(const std::string& text);
-    void ReleaseShareQRTexture();
-    ImTextureID GetShareQRTexture();
-    int GetShareQRSize();
 
 }

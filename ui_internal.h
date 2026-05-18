@@ -253,7 +253,6 @@ namespace ui
     void DrawPopupTabBar(int credId, bool hasSecurityTab, int& currentTab);
     void DrawTOTPRow(const char* id, const std::string& totp_secret, float iconColW, float valueColW, float rowWidth, float btnSz, float rowSpacing);
     void DrawPasswordRow(const char* id, int credId, GetPasswordFn get_password_fn, const std::vector<PwHistoryEntry>& password_history, std::set<int>& visiblePasswords, float iconColW, float valueColW, float rowWidth, float btnSz, float rowSpacing);
-    void DrawShareStatusRow(const AccordionItem& c, ShellState& s);
     bool DrawCopyFieldRow(const char* id, const char* label, const std::string& value, const std::string& display_value, uint64_t rowKey, int fieldIndex, float rowWidth, bool& interaction_consumed);
 
     // Security card (defined in ui_views_threepane.cpp)

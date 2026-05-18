@@ -24,7 +24,7 @@
     <ProjectGuid>{15a97be5-4605-4e62-8c8e-53f506af6a54}</ProjectGuid>
     <RootNamespace>program</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
-    <ProjectName>pwmngr2.2.1</ProjectName>
+    <ProjectName>PasswordDefense</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>A:\prjcts\pwmngr\pwmngr2.2.1\web;A:\prjcts\pwmngr\pwmngr2.2.1\tools;A:\prjcts\pwmngr\pwmngr2.2.1\icons;A:\prjcts\pwmngr\pwmngr2.2.1\credentials;A:\libs\libsodium\include;A:\libs\sqlite3\include;C:\Users\Humbe\OneDrive\Desktop\folder\libs\sdk\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>A:\prjcts\pwmngr\pw-windows\icons;A:\prjcts\pwmngr\pw-windows\tools;A:\prjcts\pwmngr\pw-windows\credentials;A:\libs\libsodium\include;A:\libs\sqlite3\include;C:\Users\Humbe\OneDrive\Desktop\folder\libs\sdk\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard_C>Default</LanguageStandard_C>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -142,7 +142,6 @@
   <ItemGroup>
     <ClCompile Include="application.cpp" />
     <ClCompile Include="app_import_export.cpp" />
-    <ClCompile Include="app_sharing.cpp" />
     <ClCompile Include="app_display_helpers.cpp" />
     <ClCompile Include="tools\save.cpp" />
     <ClCompile Include="credentials\vault_db.cpp" />
@@ -175,9 +174,6 @@
     <ClCompile Include="tools\utility.cpp" />
     <ClCompile Include="tools\totp.cpp" />
     <ClCompile Include="tools\qrcodegen.cpp" />
-    <ClCompile Include="web\auth_crypto.cpp" />
-    <ClCompile Include="web\sync_manager.cpp" />
-    <ClCompile Include="web\local_server.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="tools\save.h" />
@@ -214,9 +210,6 @@
     <ClInclude Include="tools\totp.h" />
     <ClInclude Include="tools\qrcodegen.hpp" />
     <ClInclude Include="tools\xor.h" />
-    <ClInclude Include="web\auth_crypto.h" />
-    <ClInclude Include="web\sync_manager.h" />
-    <ClInclude Include="web\local_server.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resources.rc" />

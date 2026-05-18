@@ -1,6 +1,6 @@
 // app_internal.h
 // Shared declarations for application translation units.
-// Included by application.cpp (core), app_import_export.cpp, app_sharing.cpp.
+// Included by application.cpp (core) and app_import_export.cpp.
 #pragma once
 
 #include "credentials/credential.h"
@@ -37,15 +37,6 @@ struct CsvImportResult {
 };
 
 CsvImportResult parse_csv_import(const std::string& file_content);
-
-// ============================================================
-// Sharing helpers (defined in app_sharing.cpp)
-// ============================================================
-
-std::string Anonbase64_encode(const std::vector<uint8_t>& data);
-std::vector<uint8_t> base64_decode(const std::string& b64);
-std::string base64_url_encode(const std::vector<uint8_t>& data);
-std::string serialize_credential_for_share(const Credential& c, const std::string& pw);
 
 // ============================================================
 // Display helpers (defined in app_display_helpers.cpp)

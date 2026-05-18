@@ -1,10 +1,21 @@
 #pragma once
 #include <d3d11.h>
 #include <string>
+#include <cstdint>
 
 namespace favicon {
     void Init();
     void Shutdown();
+
+    // Offline-first: when disabled (default), Get() never touches the network —
+    // it still serves bundled + previously-cached icons from disk.
+    void SetNetworkEnabled(bool enabled);
+    bool IsNetworkEnabled();
+
+    // On-disk favicon cache transparency.
+    struct CacheStats { int file_count = 0; uint64_t total_bytes = 0; };
+    CacheStats GetCacheStats();
+    void ClearCache();   // wipes disk cache + in-memory fetched icons (keeps bundled)
 
     // Returns SRV for the website's favicon, or nullptr if unavailable (yet).
     // Automatically triggers async fetch if not cached.

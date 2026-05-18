@@ -98,35 +98,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	std::string get_sync_server_url()
-	{
-		if (cfg_path.empty()) return "";
-
-		try {
-			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
-			return j.value("sync_server_url", "");
-		}
-		catch (...) {
-			return "";
-		}
-	}
-
-	void set_sync_server_url(const std::string& url)
-	{
-		if (cfg_path.empty()) return;
-
-		nlohmann::json j;
-		try {
-			j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
-		}
-		catch (...) {
-			j = nlohmann::json::object();
-		}
-
-		j["sync_server_url"] = url;
-		helpers::str_to_file(cfg_path, j.dump(5));
-	}
-
 	int get_theme()
 	{
 		if (cfg_path.empty()) return 0; // default dark
@@ -509,6 +480,47 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
+	// Network & privacy (offline-first — both default false)
+	bool get_online_favicons()
+	{
+		if (cfg_path.empty()) return false;
+		try {
+			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
+			return j.value("online_favicons", false);
+		}
+		catch (...) { return false; }
+	}
+
+	void set_online_favicons(bool enabled)
+	{
+		if (cfg_path.empty()) return;
+		nlohmann::json j;
+		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
+		catch (...) { j = nlohmann::json::object(); }
+		j["online_favicons"] = enabled;
+		helpers::str_to_file(cfg_path, j.dump(5));
+	}
+
+	bool get_online_breach_check()
+	{
+		if (cfg_path.empty()) return false;
+		try {
+			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
+			return j.value("online_breach_check", false);
+		}
+		catch (...) { return false; }
+	}
+
+	void set_online_breach_check(bool enabled)
+	{
+		if (cfg_path.empty()) return;
+		nlohmann::json j;
+		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
+		catch (...) { j = nlohmann::json::object(); }
+		j["online_breach_check"] = enabled;
+		helpers::str_to_file(cfg_path, j.dump(5));
+	}
+
 	// Vault behavior
 	bool get_autosave_enabled()
 	{
@@ -851,75 +863,6 @@ namespace cfg {
 			{"sub_identity", cols.sub_identity},
 			{"sub_note",     cols.sub_note}
 		};
-		helpers::str_to_file(cfg_path, j.dump(5));
-	}
-
-	// Local extension server
-	bool get_local_server_enabled()
-	{
-		if (cfg_path.empty()) return false;
-		try {
-			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
-			return j.value("local_server_enabled", false);
-		}
-		catch (...) { return false; }
-	}
-
-	void set_local_server_enabled(bool enabled)
-	{
-		if (cfg_path.empty()) return;
-		nlohmann::json j;
-		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
-		catch (...) { j = nlohmann::json::object(); }
-		j["local_server_enabled"] = enabled;
-		helpers::str_to_file(cfg_path, j.dump(5));
-	}
-
-	int get_local_server_port()
-	{
-		if (cfg_path.empty()) return 19837;
-		try {
-			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
-			return j.value("local_server_port", 19837);
-		}
-		catch (...) { return 19837; }
-	}
-
-	void set_local_server_port(int port)
-	{
-		if (cfg_path.empty()) return;
-		nlohmann::json j;
-		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
-		catch (...) { j = nlohmann::json::object(); }
-		j["local_server_port"] = port;
-		helpers::str_to_file(cfg_path, j.dump(5));
-	}
-
-	// Local server pairings
-	std::string get_local_server_pairings_raw()
-	{
-		if (cfg_path.empty()) return "[]";
-		try {
-			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
-			if (j.contains("local_server_pairings") && j["local_server_pairings"].is_array())
-				return j["local_server_pairings"].dump();
-			return "[]";
-		}
-		catch (...) { return "[]"; }
-	}
-
-	void set_local_server_pairings_raw(const std::string& json_array)
-	{
-		if (cfg_path.empty()) return;
-		nlohmann::json j;
-		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
-		catch (...) { j = nlohmann::json::object(); }
-		try {
-			j["local_server_pairings"] = nlohmann::json::parse(json_array);
-		}
-		catch (...) {
-			j["local_server_pairings"] = nlohmann::json::array();
-		}
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 

@@ -91,71 +91,6 @@ namespace ui
         s_2fa_qr_img_size = 0;
     }
 
-    // ---- Share QR texture (separate from 2FA) ----
-    static ID3D11Texture2D*          s_share_qr_tex = nullptr;
-    static ID3D11ShaderResourceView* s_share_qr_srv = nullptr;
-    static int                       s_share_qr_img_size = 0;
-
-    void CreateShareQRTexture(const std::string& text)
-    {
-        if (s_share_qr_srv) { s_share_qr_srv->Release(); s_share_qr_srv = nullptr; }
-        if (s_share_qr_tex) { s_share_qr_tex->Release(); s_share_qr_tex = nullptr; }
-
-        qrcodegen::QrCode qr = qrcodegen::QrCode::encodeText(
-            text.c_str(), qrcodegen::QrCode::Ecc::MEDIUM);
-
-        int qrSize = qr.getSize();
-        int scale  = 4;
-        int border = 2;
-        int imgSize = (qrSize + 2 * border) * scale;
-        s_share_qr_img_size = imgSize;
-
-        std::vector<uint32_t> pixels(imgSize * imgSize);
-        for (int y = 0; y < imgSize; y++) {
-            for (int x = 0; x < imgSize; x++) {
-                int qx = x / scale - border;
-                int qy = y / scale - border;
-                bool dark = (qx >= 0 && qx < qrSize && qy >= 0 && qy < qrSize
-                             && qr.getModule(qx, qy));
-                pixels[y * imgSize + x] = dark ? 0xFF000000 : 0xFFFFFFFF;
-            }
-        }
-
-        D3D11_TEXTURE2D_DESC desc = {};
-        desc.Width  = imgSize;
-        desc.Height = imgSize;
-        desc.MipLevels = 1;
-        desc.ArraySize = 1;
-        desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        desc.SampleDesc.Count = 1;
-        desc.Usage     = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-        D3D11_SUBRESOURCE_DATA sub = {};
-        sub.pSysMem      = pixels.data();
-        sub.SysMemPitch   = imgSize * 4;
-
-        render::g_pd3dDevice->CreateTexture2D(&desc, &sub, &s_share_qr_tex);
-        if (!s_share_qr_tex) return;
-
-        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-        srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MipLevels = 1;
-
-        render::g_pd3dDevice->CreateShaderResourceView(s_share_qr_tex, &srvDesc, &s_share_qr_srv);
-    }
-
-    void ReleaseShareQRTexture()
-    {
-        if (s_share_qr_srv) { s_share_qr_srv->Release(); s_share_qr_srv = nullptr; }
-        if (s_share_qr_tex) { s_share_qr_tex->Release(); s_share_qr_tex = nullptr; }
-        s_share_qr_img_size = 0;
-    }
-
-    ImTextureID GetShareQRTexture() { return (ImTextureID)s_share_qr_srv; }
-    int GetShareQRSize() { return s_share_qr_img_size; }
-
     // Helper: ensure URL has protocol for ShellExecute
     std::string EnsureUrlProtocol(const std::string& url)
     {
@@ -590,13 +525,14 @@ namespace ui
             s.start_on_boot     = cfg::get_start_on_boot();
             s.start_minimized   = cfg::get_start_minimized();
             s.auto_open_vault   = cfg::get_auto_open_vault();
+            s.online_favicons   = cfg::get_online_favicons();
+            s.online_breach_check = cfg::get_online_breach_check();
+            favicon::SetNetworkEnabled(s.online_favicons);
             s.pill_tab_0        = cfg::get_pill_tab_0();
             s.pill_tab_1        = cfg::get_pill_tab_1();
             s.auto_backup       = cfg::get_auto_backup();
             s.backup_keep_count = cfg::get_backup_keep_count();
             s.detailed_header_cols = cfg::get_detailed_header_columns();
-            s.local_server_enabled = cfg::get_local_server_enabled();
-            s.local_server_port    = cfg::get_local_server_port();
             s.three_pane_sidebar_collapsed = cfg::get_three_pane_sidebar_collapsed();
             s.three_pane_list_collapsed    = cfg::get_three_pane_list_collapsed();
             s.three_pane_sidebar_auto_collapse = cfg::get_three_pane_sidebar_auto_collapse();

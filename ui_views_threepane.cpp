@@ -1908,14 +1908,14 @@ namespace ui
                     char header[64];
                     snprintf(header, sizeof(header), ICON_MDI_REPEAT " Reused across %d other credential%s",
                         (int)reused.size(), reused.size() == 1 ? "" : "s");
-                    ImGui::PushStyleColor(ImGuiCol_Text, colors::SyncWarning);
+                    ImGui::PushStyleColor(ImGuiCol_Text, colors::LinkWarning);
                     ImGui::TextUnformatted(header);
                     ImGui::PopStyleColor();
 
                     // Render each reused credential as a flow-wrapped clickable link list
                     bool dk = IsDarkTheme();
-                    ImU32 linkCol     = dk ? colors::SyncPendingLight : colors::SyncPending;
-                    ImU32 linkHoverCol = dk ? colors::SyncOnlineLight : colors::SyncOnline;
+                    ImU32 linkCol     = dk ? colors::LinkMutedLight : colors::LinkMuted;
+                    ImU32 linkHoverCol = dk ? colors::LinkNormalLight : colors::LinkNormal;
                     const float commaW = ImGui::CalcTextSize(", ").x;
                     const float lineH  = ImGui::GetTextLineHeight();
                     const float regionMinX = ImGui::GetCursorScreenPos().x;
@@ -1987,7 +1987,7 @@ namespace ui
             }
         }
 
-        // Separator between password feedback and sync/backup
+        // Separator between password feedback and backup status
         {
             ImVec2 p = ImGui::GetCursorScreenPos();
             float x0 = p.x;
@@ -1999,27 +1999,15 @@ namespace ui
             ImGui::Dummy(ImVec2(0, 1.0f));
         }
 
-        // Sync / Backup status (always show)
+        // Backup status
         {
             bool hasBackups = !s.footer_backup_meta.empty();
 
             ImGui::Dummy(ImVec2(0, 2));
-            std::string statusLine;
-
-            if (s.sync_logged_in)
-                statusLine = ICON_MDI_CLOUD_CHECK " Synced";
-            else
-                statusLine = ICON_MDI_CLOUD_OFF " Not synced";
-
-            statusLine += "  \xc2\xb7  ";
-            statusLine += hasBackups ? (ICON_MDI_HISTORY " Backed up") : (ICON_MDI_HISTORY " No backups");
+            std::string statusLine = hasBackups ? (ICON_MDI_HISTORY " Backed up") : (ICON_MDI_HISTORY " No backups");
 
             ImGui::TextDisabled("%s", statusLine.c_str());
         }
-
-        // Share status (view count, expiry)
-        if (g_shell_ptr)
-            DrawShareStatusRow(c, *g_shell_ptr);
 
         ImGui::Unindent(padX);
         ImGui::Dummy(ImVec2(0, 11.0f));
@@ -2630,9 +2618,6 @@ namespace ui
             }
         }
 
-        // Share status row
-        DrawShareStatusRow(c, s);
-
         // Timestamps for non-Password types (Password has them in About container)
         if (c.type != CredType::Password && c.type != CredType::CreditCard && (c.created_at_ms != 0 || c.updated_at_ms != 0))
         {
@@ -2675,12 +2660,8 @@ namespace ui
                 ImGui::SameLine(0, 4);
             }
 
-            if (IconSquareBtn("##ab_share", ICON_MDI_SHARE_VARIANT, "Share", ibSz))
-                out.anon_share_id = c.id;
-
             if (!read_only)
             {
-                ImGui::SameLine(0, 4);
                 if (IconSquareBtn("##ab_edit", ICON_MDI_PENCIL, "Edit", ibSz))
                     out.edit_open_id = c.id;
 

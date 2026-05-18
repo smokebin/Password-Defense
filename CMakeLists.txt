@@ -23,7 +23,6 @@ endif()
 set(CORE_SOURCES
     application.cpp
     app_import_export.cpp
-    app_sharing.cpp
     app_display_helpers.cpp
 
     # UI
@@ -50,10 +49,6 @@ set(CORE_SOURCES
     tools/totp.cpp
     tools/qrcodegen.cpp
 
-    # Web / Sync
-    web/auth_crypto.cpp
-    web/sync_manager.cpp
-    web/local_server.cpp
 )
 
 # ImGui core (platform-independent)
@@ -158,7 +153,6 @@ endif()
 # ==============================================================
 target_include_directories(PasswordDefense PRIVATE
     ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/web
     ${CMAKE_SOURCE_DIR}/tools
     ${CMAKE_SOURCE_DIR}/icons
     ${CMAKE_SOURCE_DIR}/credentials
@@ -186,7 +180,6 @@ if(PD_PLATFORM STREQUAL "win32")
         sodium
         d3d11.lib
         dwmapi.lib
-        winhttp.lib
         shell32.lib
         shlwapi.lib
     )

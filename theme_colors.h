@@ -74,12 +74,12 @@ namespace colors
     // --- Transparent ---
     constexpr ImU32 Transparent     = IM_COL32(0, 0, 0, 0);
 
-    // --- Sync status dots ---
-    constexpr ImU32 SyncOnline      = IM_COL32(30, 80, 160, 255);
-    constexpr ImU32 SyncOnlineLight = IM_COL32(160, 195, 240, 255);
-    constexpr ImU32 SyncPending     = IM_COL32(50, 100, 180, 200);
-    constexpr ImU32 SyncPendingLight= IM_COL32(130, 170, 220, 200);
-    constexpr ImU32 SyncWarning     = IM_COL32(190, 156, 63, 200);
+    // --- Link / cross-reference colors ---
+    constexpr ImU32 LinkNormal      = IM_COL32(30, 80, 160, 255);
+    constexpr ImU32 LinkNormalLight = IM_COL32(160, 195, 240, 255);
+    constexpr ImU32 LinkMuted       = IM_COL32(50, 100, 180, 200);
+    constexpr ImU32 LinkMutedLight  = IM_COL32(130, 170, 220, 200);
+    constexpr ImU32 LinkWarning     = IM_COL32(190, 156, 63, 200);
 }
 
 // ============================================================

@@ -19,10 +19,6 @@ namespace cfg {
 	void set_self_destruct_mode(int mode);
 	void register_self_destruct_handler();
 
-	// Sync configuration
-	std::string get_sync_server_url();
-	void set_sync_server_url(const std::string& url);
-
 	// Theme configuration (0 = dark, 1 = light)
 	int get_theme();
 	void set_theme(int theme);
@@ -74,6 +70,12 @@ namespace cfg {
 	std::string get_pill_tab_1();  // default "Favorites"
 	void set_pill_tab_1(const std::string& label);
 
+	// Network & privacy (offline-first — both default OFF, no internet unless opted in)
+	bool get_online_favicons();        // fetch website icons from google.com
+	void set_online_favicons(bool enabled);
+	bool get_online_breach_check();    // HIBP k-anonymity check against api.pwnedpasswords.com
+	void set_online_breach_check(bool enabled);
+
 	// Vault behavior
 	bool get_autosave_enabled();
 	void set_autosave_enabled(bool enabled);
@@ -101,16 +103,6 @@ namespace cfg {
 	void set_auto_backup(bool enabled);
 	int  get_backup_keep_count();
 	void set_backup_keep_count(int count);
-
-	// Local extension server
-	bool get_local_server_enabled();
-	void set_local_server_enabled(bool enabled);
-	int  get_local_server_port();
-	void set_local_server_port(int port);
-
-	// Local server pairings (browser extension HMAC pairing)
-	std::string get_local_server_pairings_raw();   // returns JSON array string
-	void set_local_server_pairings_raw(const std::string& json_array);
 
 	// High-security KDF option (uses SENSITIVE Argon2id params — slower unlock)
 	bool get_high_security_kdf();

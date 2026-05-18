@@ -29,7 +29,7 @@ Zero-Knowledge by Design
 
 Encryption keys are derived locally from your master password using Argon2id.
 
-All vault data is encrypted using XChaCha20-Poly1305 before being written to disk or synced.
+All vault data is encrypted using XChaCha20-Poly1305 before being written to disk.
 
 We use the well-audited libsodium cryptographic library to implement these primitives.
 

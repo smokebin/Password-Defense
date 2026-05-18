@@ -104,12 +104,6 @@
     <ClCompile Include="A:\libs\sqlite3\sqlite3.c">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="web\auth_crypto.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="web\sync_manager.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="credentials\twofa_ops.cpp">
       <Filter>credentials</Filter>
     </ClCompile>
@@ -118,9 +112,6 @@
     </ClCompile>
     <ClCompile Include="tools\qrcodegen.cpp">
       <Filter>tools</Filter>
-    </ClCompile>
-    <ClCompile Include="web\local_server.cpp">
-      <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="ui_widgets.cpp">
       <Filter>gui</Filter>
@@ -137,7 +128,16 @@
     <ClCompile Include="app_import_export.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="app_sharing.cpp">
+    <ClCompile Include="app_display_helpers.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="sidebar_icons.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_views_threepane.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_views_table.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -226,12 +226,6 @@
     <ClInclude Include="credentials\crypto\vault_crypto.h">
       <Filter>credentials\crypto</Filter>
     </ClInclude>
-    <ClInclude Include="web\auth_crypto.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="web\sync_manager.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="credentials\twofa_ops.h">
       <Filter>credentials</Filter>
     </ClInclude>
@@ -240,9 +234,6 @@
     </ClInclude>
     <ClInclude Include="tools\qrcodegen.hpp">
       <Filter>tools</Filter>
-    </ClInclude>
-    <ClInclude Include="web\local_server.h">
-      <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="icons\IconsMaterialDesignIcons.h">
       <Filter>icons</Filter>

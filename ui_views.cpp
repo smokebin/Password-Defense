@@ -119,7 +119,6 @@ namespace ui
         bool edit_committed = false;
         bool edit_open_requested = false;
         int  edit_open_id_override = -1;   // if >= 0, open this credential instead of current
-        bool anon_share_requested = false;
         bool toggle_pin_requested = false;
         bool toggle_fav_requested = false;
         AccordionItem edited{};
@@ -227,74 +226,6 @@ namespace ui
         snprintf(buf, sizeof(buf), "%s %d, %d", months[m - 1], d, y);
         return std::string(buf);
     }
-    // Share status row: "Shared · expires in Xh · 2/5 views"
-    void DrawShareStatusRow(const AccordionItem& c, ShellState& s)
-    {
-        if (!g_shell_ptr || c.uuid.empty()) return;
-
-        // Check if this credential has a cached share status
-        auto it = s.share_status_cache.find(c.uuid);
-
-        // Request a fetch if we don't have cached data yet (or it's stale)
-        bool need_request = false;
-        if (it == s.share_status_cache.end()) {
-            need_request = true;
-        } else {
-            int64_t age_ms = helpers::now_unix_ms() - it->second.fetched_at_ms;
-            if (age_ms >= 60000) need_request = true;
-        }
-
-        if (need_request && !s.share_status_fetching.load(std::memory_order_relaxed))
-        {
-            // Avoid duplicate entries in the queue
-            bool already_queued = false;
-            for (const auto& q : s.share_status_request_queue)
-                if (q == c.uuid) { already_queued = true; break; }
-            if (!already_queued)
-                s.share_status_request_queue.push_back(c.uuid);
-        }
-
-        if (it == s.share_status_cache.end() || !it->second.status.valid)
-            return;
-
-        const auto& st = it->second.status;
-
-        // Build display string
-        std::string line = ICON_MDI_SHARE_VARIANT " Shared";
-
-        if (st.expired || st.views_exhausted) {
-            line += "  \xc2\xb7  Expired";
-            ImGui::PushStyleColor(ImGuiCol_Text, colors::TimerExpired);
-            ImGui::TextWrapped("%s", line.c_str());
-            ImGui::PopStyleColor();
-            return;
-        }
-
-        // Time remaining
-        if (st.expires_at_ms > 0) {
-            int64_t remain_ms = st.expires_at_ms - helpers::now_unix_ms();
-            if (remain_ms > 0) {
-                int64_t remain_min = remain_ms / 60000;
-                std::string time_str;
-                if (remain_min < 60)
-                    time_str = std::to_string(remain_min) + "m";
-                else if (remain_min < 1440)
-                    time_str = std::to_string(remain_min / 60) + "h";
-                else
-                    time_str = std::to_string(remain_min / 1440) + "d";
-                line += "  \xc2\xb7  expires in " + time_str;
-            }
-        }
-
-        // View count
-        if (st.max_views > 0)
-            line += "  \xc2\xb7  " + std::to_string(st.view_count) + "/" + std::to_string(st.max_views) + " views";
-        else
-            line += "  \xc2\xb7  " + std::to_string(st.view_count) + " views";
-
-        ImGui::TextDisabled("%s", line.c_str());
-    }
-
     // ============================================================
     // INFO ROW HELPERS (for accordion card body)
     // ============================================================
@@ -1758,8 +1689,6 @@ namespace ui
                     { out.toggle_fav_requested = true; out.interacted = true; }
                     ImGui::SameLine(0, ibGap);
                 }
-                if (IconSquareBtn("##ab_share_d", ICON_MDI_SHARE_VARIANT, "Share", ibSz))
-                { out.anon_share_requested = true; out.interacted = true; }
                 if (!read_only)
                 {
                     ImGui::SameLine(0, ibGap);
@@ -2764,8 +2693,6 @@ namespace ui
 
                 if (BarMenuItem(ICON_MDI_PENCIL "   Edit Credential", false))
                 { out.edit_open_requested = true; out.interacted = true; }
-                if (BarMenuItem(ICON_MDI_SHARE_VARIANT "   Share Credential", false))
-                { out.anon_share_requested = true; out.interacted = true; }
                 ImGui::Separator();
                 if (BarMenuItem(ICON_MDI_DELETE "   Delete Credential", false))
                 { out.requested_delete = true; out.interacted = true; ImGui::CloseCurrentPopup(); }
@@ -3076,9 +3003,6 @@ namespace ui
                 if (r.edit_open_requested)
                     out.edit_open_id = (r.edit_open_id_override >= 0) ? r.edit_open_id_override : r.id;
 
-                if (r.anon_share_requested)
-                    out.anon_share_id = r.id;
-
                 if (r.toggle_pin_requested)
                     out.toggle_pin_id = r.id;
 
@@ -3145,12 +3069,6 @@ namespace ui
                 if (!read_only && r.edit_open_requested)
                 {
                     out.edit_open_id = (r.edit_open_id_override >= 0) ? r.edit_open_id_override : r.id;
-                    break;
-                }
-
-                if (r.anon_share_requested)
-                {
-                    out.anon_share_id = r.id;
                     break;
                 }
 

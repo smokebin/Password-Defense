@@ -1,6 +1,6 @@
 # Password Defense
 
-A zero-knowledge, offline-first password manager built with C++ and ImGui. Your master password never leaves your device — all encryption happens locally using XChaCha20-Poly1305 and Argon2id.
+A zero-knowledge, **fully offline** password manager built with C++ and ImGui. Your master password never leaves your device — all encryption happens locally using XChaCha20-Poly1305 and Argon2id. The app makes **no network connections by default**; the only two features that can reach the internet are opt-in and OFF until you enable them (see [Network & Privacy](#network--privacy)).
 
 ## Screenshot
 
@@ -25,7 +25,7 @@ A zero-knowledge, offline-first password manager built with C++ and ImGui. Your 
 ### Security Center
 - Weak password detection (entropy scoring + pattern analysis)
 - Reused password detection across all credentials
-- Breach checking via Have I Been Pwned (k-anonymity — passwords never leave your machine)
+- Optional breach checking via Have I Been Pwned (opt-in, OFF by default; k-anonymity — passwords never leave your machine)
 - Password aging alerts (configurable threshold, default 90 days)
 - At-a-glance dashboard with one-click navigation to fix
 
@@ -63,25 +63,18 @@ A zero-knowledge, offline-first password manager built with C++ and ImGui. Your 
 - **Export**: CSV (Bitwarden/Chrome compatible), PWM (native encrypted), KDBX (KeePass)
 - **Import**: CSV (auto-detect Bitwarden, KeePass, LastPass, 1Password), PWM with conflict detection
 
-### Cloud Sync (Pro)
-- Revision-based delta sync (only changed credentials)
-- Offline-first with live status indicators
-- Automatic OAuth token refresh
-
-### Browser Extension
-- Local HTTP server with QR code pairing
-- HMAC-SHA256 request signing, nonce-based replay protection
-- Rate limiting, manage and revoke paired browsers
-
-### Credential Sharing
-- Share via encrypted, time-limited links (1h / 24h / 7d / 30d)
-- Scope control: all, by group, or by type
-- View limits, optional passphrase protection, QR code
+### Network & Privacy
+- **Fully offline by default** — no sync, no servers, no telemetry, no outbound connections
+- Two opt-in online features, both OFF until you enable them in **Settings → Security → Network & Privacy**:
+  - **Website Icons** — fetch site favicons on demand (lazily, only for entries shown)
+  - **Online Breach Check** — Have I Been Pwned k-anonymity lookup (no password sent)
+- Favicon cache transparency: live on-disk size/count readout with one-click **Clear**
+- Disabling favicons stops all new fetches; already-cached icons keep working offline
 
 ### Desktop Integration
 - System tray (minimize/close to tray, right-click menu)
 - Start on boot, start minimized, always-on-top
-- Auto-open last vault, read-only mode, favicon loading
+- Auto-open last vault, read-only mode
 
 ## Platform
 
