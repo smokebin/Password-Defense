@@ -23,9 +23,6 @@ namespace cred_ops {
         c.created_at_ms = row.created_at_ms;
         c.updated_at_ms = row.updated_at_ms;
         c.deleted_at_ms = row.deleted_at_ms;
-        c.server_rev = row.server_rev;
-        c.is_dirty = row.is_dirty;
-
         // Decrypt with UUID as AAD
         std::string json = enc::decrypt_credential(row.encrypted_blob, key, row.uuid);
 

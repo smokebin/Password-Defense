@@ -1288,19 +1288,18 @@ namespace ui
             { "Clear Clipboard",  "Auto-clear copied passwords",               ICON_MDI_CLIPBOARD,         "Security", 1 },
             { "Auto-lock",        "Lock vault after inactivity",               ICON_MDI_CLOCK,             "Security", 1 },
             { "Two-Factor Auth",  "Require authenticator code to unlock",      ICON_MDI_SHIELD_HALF_FULL,     "Security", 1 },
+            { "Website Icons",    "Fetch site icons over the internet",        ICON_MDI_IMAGE_OUTLINE,     "Security", 1 },
+            { "Online Breach Check", "HIBP k-anonymity password check",        ICON_MDI_SHIELD_SEARCH,     "Security", 1 },
+            { "Favicon Cache",    "View or clear downloaded site icons",       ICON_MDI_DELETE_SWEEP,      "Security", 1 },
             // Tab 2 - Backup
             { "Auto-backup",      "Create backup when saving vault",           ICON_MDI_HISTORY, "Backup",   2 },
             { "Keep backups",     "Maximum backup files to retain",            ICON_MDI_DATABASE,          "Backup",   2 },
-            // Tab 3 - Sync
-            { "Cloud Sync",       "Sync your vault across devices",            ICON_MDI_CLOUD,             "Backup",   2 },
-            { "Extension Server", "Enable browser extension server",           ICON_MDI_PUZZLE,      "Vault",    0 },
             // Tab 3 - Transfer
             { "Export as CSV",     "Spreadsheet compatible",                    ICON_MDI_FILE_EXCEL,        "Transfer", 3 },
             { "Export as PWM",     "Encrypted backup format",                   ICON_MDI_LOCK,              "Transfer", 3 },
             { "Export as KDBX",    "KeePass compatible",                        ICON_MDI_FILE_EXPORT,       "Transfer", 3 },
             { "Import PWM",        "Restore from encrypted backup",             ICON_MDI_FILE_IMPORT,       "Transfer", 3 },
             { "Import CSV",        "Chrome, Bitwarden, LastPass, 1Password",    ICON_MDI_FILE_DELIMITED,          "Transfer", 3 },
-            { "Share Vault",       "Send credentials via encrypted link",       ICON_MDI_SHARE_VARIANT,       "Transfer", 3 },
         };
         static const int s_search_entry_count = IM_ARRAYSIZE(s_search_entries);
 
@@ -1583,90 +1582,6 @@ namespace ui
                 auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
                 if (result.action_used && canRestore)
                     s.footer_restore_clicked = true;
-            }
-
-            EndCategoryCard();
-
-            // ---- Cloud Sync Card ----
-            BeginCategoryCard("Cloud Sync", "Sync your vault across devices");
-
-            if (!s.sync_logged_in)
-            {
-                SettingRowSpec row{};
-                row.id = ImGui::GetID("sync_sign_in");
-                row.title = "Sign In";
-                row.subtitle = "Sign in to sync your vault across devices";
-                row.leftIcon = ICON_MDI_LOGIN;
-                row.rightType = SettingRightType::Button;
-                row.buttonLabel = "Sign In";
-
-                auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                if (result.action_used)
-                    s.sync_login_clicked = true;
-            }
-            else
-            {
-                {
-                    SettingRowSpec row{};
-                    row.id = ImGui::GetID("sync_username");
-                    row.title = "Signed in as";
-                    row.subtitle = s.sync_username.c_str();
-                    row.leftIcon = ICON_MDI_ACCOUNT;
-                    row.rightType = SettingRightType::None;
-                    row.enabled = false;
-                    RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                    DrawRowDivider();
-                }
-
-                {
-                    const char* status_text = "Unknown";
-                    switch (s.sync_status) {
-                        case 0: status_text = "Up to date"; break;
-                        case 1: status_text = "Connecting..."; break;
-                        case 2: status_text = "Authenticating..."; break;
-                        case 3: status_text = "Uploading..."; break;
-                        case 4: status_text = "Downloading..."; break;
-                        case 5: status_text = "Sync complete"; break;
-                        case 6: status_text = s.sync_status_msg.c_str(); break;
-                        case 7: status_text = "Offline"; break;
-                    }
-                    SettingRowSpec row{};
-                    row.id = ImGui::GetID("sync_status");
-                    row.title = "Status";
-                    row.subtitle = status_text;
-                    row.leftIcon = ICON_MDI_CLOUD;
-                    row.rightType = SettingRightType::None;
-                    row.enabled = false;
-                    RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                    DrawRowDivider();
-                }
-
-                {
-                    bool is_syncing = (s.sync_status >= 1 && s.sync_status <= 4);
-                    SettingRowSpec row{};
-                    row.id = ImGui::GetID("sync_now");
-                    row.title = "Sync Now";
-                    row.subtitle = is_syncing ? "Syncing..." : "Push and pull changes";
-                    row.leftIcon = ICON_MDI_REFRESH;
-                    row.rightType = SettingRightType::Button;
-                    row.buttonLabel = is_syncing ? "Syncing" : "Sync";
-                    row.enabled = !is_syncing;
-                    auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                    if (result.action_used) s.sync_now_clicked = true;
-                    DrawRowDivider();
-                }
-
-                {
-                    SettingRowSpec row{};
-                    row.id = ImGui::GetID("sync_logout");
-                    row.title = "Sign Out";
-                    row.subtitle = "Disconnect from cloud sync";
-                    row.leftIcon = ICON_MDI_LOGOUT;
-                    row.rightType = SettingRightType::Button;
-                    row.buttonLabel = "Sign Out";
-                    auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                    if (result.action_used) s.sync_logout_clicked = true;
-                }
             }
 
             EndCategoryCard();
@@ -2012,119 +1927,6 @@ namespace ui
                 row.toggleValue = &s.privacy_mode;
                 auto r = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
                 if (r.action_used) cfg::set_privacy_mode(s.privacy_mode);
-            }
-
-            EndCategoryCard();
-
-            // ---- Browser Extension Card ----
-            BeginCategoryCard("Browser Extension", "Serve credentials to browser extension");
-
-            {
-                SettingRowSpec row{};
-                row.id = ImGui::GetID("ext_server_enabled");
-                row.title = "Extension Server";
-                row.subtitle = "Serve vault to browser extension on localhost";
-                row.leftIcon = ICON_MDI_PUZZLE;
-                row.rightType = SettingRightType::Toggle;
-                row.toggleValue = &s.local_server_enabled;
-                auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                if (result.action_used) {
-                    cfg::set_local_server_enabled(s.local_server_enabled);
-                    s.local_server_toggled = true;
-                }
-                DrawRowDivider();
-            }
-
-            {
-                char port_label[32];
-                snprintf(port_label, sizeof(port_label), "%d", s.local_server_port);
-                SettingRowSpec row{};
-                row.id = ImGui::GetID("ext_server_port");
-                row.title = "Port";
-                row.subtitle = port_label;
-                row.leftIcon = ICON_MDI_LAN;
-                row.rightType = SettingRightType::None;
-                row.enabled = false;
-                RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-            }
-
-            if (s.local_server_enabled)
-            {
-                DrawRowDivider();
-
-                if (s.show_pairing_code && s.pairing_code_timer > 0.0f)
-                {
-                    s.pairing_code_timer -= ImGui::GetIO().DeltaTime;
-                    if (s.pairing_code_timer <= 0.0f)
-                    {
-                        s.show_pairing_code = false;
-                        s.pairing_code_display.clear();
-                    }
-                    else
-                    {
-                        ImGui::Dummy(ImVec2(0, 4));
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.4f, 1.0f));
-                        ImGui::TextWrapped("Enter this code in the browser extension:");
-                        ImGui::PopStyleColor();
-                        ImGui::Dummy(ImVec2(0, 4));
-                        float avail = ImGui::GetContentRegionAvail().x;
-                        float codeW = ImGui::CalcTextSize(s.pairing_code_display.c_str()).x * 1.8f;
-                        ImGui::SetCursorPosX((avail - codeW) * 0.5f + ImGui::GetCursorPosX());
-                        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts.Size > 1 ? ImGui::GetIO().Fonts->Fonts[1] : nullptr);
-                        ImGui::TextUnformatted(s.pairing_code_display.c_str());
-                        ImGui::PopFont();
-                        char timer_buf[32];
-                        int secs = (int)s.pairing_code_timer;
-                        snprintf(timer_buf, sizeof(timer_buf), "Expires in %d:%02d", secs / 60, secs % 60);
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-                        float timerW = ImGui::CalcTextSize(timer_buf).x;
-                        ImGui::SetCursorPosX((avail - timerW) * 0.5f + ImGui::GetCursorPosX());
-                        ImGui::TextUnformatted(timer_buf);
-                        ImGui::PopStyleColor();
-                        ImGui::Dummy(ImVec2(0, 4));
-                        DrawRowDivider();
-                    }
-                }
-
-                {
-                    SettingRowSpec row{};
-                    row.id = ImGui::GetID("pair_browser");
-                    row.title = "Pair New Browser";
-                    row.subtitle = "Generate a one-time pairing code";
-                    row.leftIcon = ICON_MDI_LINK;
-                    row.rightType = SettingRightType::Button;
-                    row.buttonLabel = "Pair";
-                    auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                    if (result.action_used) s.pair_browser_clicked = true;
-                }
-
-                if (!s.paired_browsers.empty())
-                {
-                    DrawRowDivider();
-                    ImGui::Dummy(ImVec2(0, 2));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
-                    ImGui::TextUnformatted("Paired Browsers");
-                    ImGui::PopStyleColor();
-                    ImGui::Dummy(ImVec2(0, 2));
-
-                    for (size_t i = 0; i < s.paired_browsers.size(); i++)
-                    {
-                        const auto& pb = s.paired_browsers[i];
-                        char label[128];
-                        snprintf(label, sizeof(label), "%s...  %s", pb.id_short.c_str(), pb.paired_date.c_str());
-                        char btn_id[64];
-                        snprintf(btn_id, sizeof(btn_id), "revoke_%zu", i);
-                        SettingRowSpec row{};
-                        row.id = ImGui::GetID(btn_id);
-                        row.title = label;
-                        row.leftIcon = ICON_MDI_EARTH;
-                        row.rightType = SettingRightType::Button;
-                        row.buttonLabel = "Revoke";
-                        auto result = RenderSettingRow(row, &g_settings_selected_row, 42.0f);
-                        if (result.action_used) s.revoke_pairing_id = pb.full_id;
-                        if (i + 1 < s.paired_browsers.size()) DrawRowDivider();
-                    }
-                }
             }
 
             EndCategoryCard();
@@ -2493,6 +2295,86 @@ namespace ui
                 ImGui::PopStyleVar(); // WindowPadding
                 ImGui::PopStyleColor(); // ModalWindowDimBg
             }
+
+            // ---- Network & Privacy Card ----
+            BeginCategoryCard("Network & Privacy", "This app is offline by default");
+            {
+                // Cached favicon-cache stats; refreshed on first show, on toggle, on clear.
+                static favicon::CacheStats s_np_stats;
+                static bool s_np_stats_ready = false;
+                if (!s_np_stats_ready) { s_np_stats = favicon::GetCacheStats(); s_np_stats_ready = true; }
+
+                // Website icons (favicons) toggle
+                {
+                    SettingRowSpec row{};
+                    row.id = ImGui::GetID("online_favicons");
+                    row.title = "Website Icons";
+                    row.subtitle = s.online_favicons
+                        ? "Fetches site icons from google.com as entries are shown"
+                        : "Off — no icons are downloaded (offline)";
+                    row.leftIcon = ICON_MDI_IMAGE_OUTLINE;
+                    row.rightType = SettingRightType::Toggle;
+                    row.toggleValue = &s.online_favicons;
+
+                    auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
+                    if (result.action_used)
+                    {
+                        cfg::set_online_favicons(s.online_favicons);
+                        favicon::SetNetworkEnabled(s.online_favicons);
+                    }
+                    DrawRowDivider();
+                }
+
+                // Online breach check toggle
+                {
+                    SettingRowSpec row{};
+                    row.id = ImGui::GetID("online_breach");
+                    row.title = "Online Breach Check";
+                    row.subtitle = s.online_breach_check
+                        ? "Checks api.pwnedpasswords.com (k-anonymity — no password sent)"
+                        : "Off — passwords are never checked online";
+                    row.leftIcon = ICON_MDI_SHIELD_SEARCH;
+                    row.rightType = SettingRightType::Toggle;
+                    row.toggleValue = &s.online_breach_check;
+
+                    auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
+                    if (result.action_used)
+                        cfg::set_online_breach_check(s.online_breach_check);
+                    DrawRowDivider();
+                }
+
+                // Favicon cache transparency + clear
+                {
+                    static char s_np_sub[80];
+                    double bytes = (double)s_np_stats.total_bytes;
+                    if (bytes < 1024.0)
+                        snprintf(s_np_sub, sizeof(s_np_sub), "%d file%s on disk \xC2\xB7 %.0f B",
+                                 s_np_stats.file_count, s_np_stats.file_count == 1 ? "" : "s", bytes);
+                    else if (bytes < 1024.0 * 1024.0)
+                        snprintf(s_np_sub, sizeof(s_np_sub), "%d file%s on disk \xC2\xB7 %.1f KB",
+                                 s_np_stats.file_count, s_np_stats.file_count == 1 ? "" : "s", bytes / 1024.0);
+                    else
+                        snprintf(s_np_sub, sizeof(s_np_sub), "%d file%s on disk \xC2\xB7 %.2f MB",
+                                 s_np_stats.file_count, s_np_stats.file_count == 1 ? "" : "s", bytes / (1024.0 * 1024.0));
+
+                    SettingRowSpec row{};
+                    row.id = ImGui::GetID("favicon_cache_clear");
+                    row.title = "Favicon Cache";
+                    row.subtitle = s_np_sub;
+                    row.leftIcon = ICON_MDI_DELETE_SWEEP;
+                    row.rightType = SettingRightType::Button;
+                    row.buttonLabel = "Clear";
+                    row.enabled = s_np_stats.file_count > 0;
+
+                    auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
+                    if (result.action_used && s_np_stats.file_count > 0)
+                    {
+                        favicon::ClearCache();
+                        s_np_stats = favicon::GetCacheStats();
+                    }
+                }
+            }
+            EndCategoryCard();
 
             // ---- Security Center Card ----
             BeginCategoryCard("Password Information", "Password health overview");
@@ -2982,220 +2864,6 @@ namespace ui
             }
 
             EndCategoryCard();
-
-            // ---- Share Vault Card ----
-            BeginCategoryCard("Share Vault", "Send credentials via encrypted link");
-
-            {
-                SettingRowSpec row{};
-                row.id = ImGui::GetID("share_vault");
-                row.title = "Share Vault";
-                row.subtitle = s.sync_logged_in
-                    ? "Create an encrypted, time-limited link"
-                    : "Sign in to share credentials";
-                row.leftIcon = ICON_MDI_SHARE_VARIANT;
-                row.rightType = SettingRightType::Button;
-                row.buttonLabel = "Share";
-                row.enabled = s.sync_logged_in;
-
-                auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
-                if (result.action_used && s.sync_logged_in)
-                {
-                    s.show_share_vault_modal = true;
-                    s.share_result_url.clear();
-                    s.share_error.clear();
-                    s.share_loading = false;
-                    memset(s.share_passphrase, 0, sizeof(s.share_passphrase));
-                    ImGui::OpenPopup("Share Vault###share_vault_modal");
-                }
-            }
-
-            EndCategoryCard();
-
-            // ---- Share Vault Modal ----
-            {
-                ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-                ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-                ImGui::SetNextWindowSize(ImVec2(420, 0));
-
-                bool modal_open = true;
-                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 20));
-                ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, colors::DimOverlay);
-                if (ImGui::BeginPopupModal("Share Vault###share_vault_modal", &modal_open,
-                    ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar))
-                {
-                    if (!modal_open)
-                    {
-                        s.show_share_vault_modal = false;
-                        ImGui::CloseCurrentPopup();
-                    }
-
-                    // X close text (top-right)
-                    {
-                        ImVec2 closeSz = ImGui::CalcTextSize(ICON_MDI_CLOSE);
-                        ImVec2 pos(ImGui::GetWindowPos().x + ImGui::GetWindowSize().x - closeSz.x - 20.0f,
-                                   ImGui::GetWindowPos().y + 20.0f);
-                        ImGui::SetCursorScreenPos(pos);
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                        ImGui::TextUnformatted(ICON_MDI_CLOSE);
-                        ImGui::PopStyleColor();
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0))
-                        {
-                            s.show_share_vault_modal = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::SetCursorPosY(ImGui::GetCursorPosY() - closeSz.y);
-                    }
-
-                    if (!s.share_result_url.empty())
-                    {
-                        // ---- Result state: show URL ----
-                        ImGui::TextColored(colors::Green, ICON_MDI_CHECK "  Share link created!");
-                        ImGui::Spacing();
-
-                        static char url_buf[2048] = {};
-                        strncpy(url_buf, s.share_result_url.c_str(), sizeof(url_buf) - 1);
-                        url_buf[sizeof(url_buf) - 1] = '\0';
-                        ImGui::SetNextItemWidth(-1);
-                        ImGui::InputText("##share_url", url_buf, sizeof(url_buf), ImGuiInputTextFlags_ReadOnly);
-
-                        ImGui::Spacing();
-                        if (StyledButton("##share_copy", ICON_MDI_CONTENT_COPY "  Copy Link", ImVec2(-1, 36)))
-                        {
-                            ImGui::SetClipboardText(s.share_result_url.c_str());
-                            ShowToast("Link copied to clipboard");
-                        }
-                        ImGui::Spacing();
-                        if (StyledButton("##share_close", "Close", ImVec2(-1, 32)))
-                        {
-                            s.show_share_vault_modal = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-                    }
-                    else if (!s.share_error.empty())
-                    {
-                        // ---- Error state ----
-                        ImGui::TextColored(colors::Red, ICON_MDI_ALERT_CIRCLE "  %s", s.share_error.c_str());
-                        ImGui::Spacing();
-                        if (StyledButton("##share_retry", "Retry", ImVec2(120, 32)))
-                        {
-                            s.share_error.clear();
-                        }
-                        ImGui::SameLine();
-                        if (StyledButton("##share_err_close", "Close", ImVec2(120, 32)))
-                        {
-                            s.show_share_vault_modal = false;
-                            ImGui::CloseCurrentPopup();
-                        }
-                    }
-                    else if (s.share_loading)
-                    {
-                        // ---- Loading state ----
-                        ImGui::TextUnformatted("Creating share link...");
-                        ImGui::Spacing();
-                        float progress = (float)fmod(ImGui::GetTime() * 0.4, 1.0);
-                        ImGui::ProgressBar(progress, ImVec2(-1, 4));
-                    }
-                    else
-                    {
-                        // ---- Config state ----
-
-                        // Scope
-                        ImGui::TextUnformatted("Scope");
-                        ImGui::RadioButton("All credentials", &s.share_scope, 0);
-                        ImGui::SameLine();
-                        ImGui::RadioButton("By Group", &s.share_scope, 1);
-                        ImGui::SameLine();
-                        ImGui::RadioButton("By Type", &s.share_scope, 2);
-
-                        if (s.share_scope == 1)
-                        {
-                            // Group combo
-                            ImGui::SetNextItemWidth(-1);
-                            if (ImGui::BeginCombo("##share_group", s.share_scope_value.empty() ? "Select group..." : s.share_scope_value.c_str()))
-                            {
-                                for (size_t i = 1; i < s.groups.size(); i++)
-                                {
-                                    bool selected = (s.share_scope_value == s.groups[i]);
-                                    if (ImGui::Selectable(s.groups[i].c_str(), selected))
-                                        s.share_scope_value = s.groups[i];
-                                }
-                                ImGui::EndCombo();
-                            }
-                        }
-                        else if (s.share_scope == 2)
-                        {
-                            // Type combo
-                            static const char* type_names[] = { "Password", "Credit Card", "Identity", "Secure Note" };
-                            ImGui::SetNextItemWidth(-1);
-                            if (ImGui::BeginCombo("##share_type", s.share_scope_value.empty() ? "Select type..." : s.share_scope_value.c_str()))
-                            {
-                                for (int i = 0; i < 4; i++)
-                                {
-                                    bool selected = (s.share_scope_value == type_names[i]);
-                                    if (ImGui::Selectable(type_names[i], selected))
-                                        s.share_scope_value = type_names[i];
-                                }
-                                ImGui::EndCombo();
-                            }
-                        }
-
-                        ImGui::Spacing();
-                        ImGui::Separator();
-                        ImGui::Spacing();
-
-                        // Expiry
-                        {
-                            static const char* expiry_labels[] = { "1 hour", "24 hours", "7 days", "30 days" };
-                            ImGui::TextUnformatted("Expiry");
-                            ImGui::SetNextItemWidth(-1);
-                            ImGui::Combo("##share_expiry", &s.share_expiry, expiry_labels, IM_ARRAYSIZE(expiry_labels));
-                        }
-
-                        ImGui::Spacing();
-
-                        // View limit
-                        {
-                            static const char* views_labels[] = { "Unlimited", "1 view", "5 views", "10 views" };
-                            ImGui::TextUnformatted("View limit");
-                            ImGui::SetNextItemWidth(-1);
-                            ImGui::Combo("##share_views", &s.share_max_views, views_labels, IM_ARRAYSIZE(views_labels));
-                        }
-
-                        ImGui::Spacing();
-                        ImGui::Separator();
-                        ImGui::Spacing();
-
-                        // Passphrase
-                        ImGui::TextUnformatted("Passphrase (optional)");
-                        {
-                            std::string pp_str(s.share_passphrase);
-                            if (InputTextPasswordReveal("##share_passphrase", &pp_str))
-                            {
-                                strncpy(s.share_passphrase, pp_str.c_str(), sizeof(s.share_passphrase) - 1);
-                                s.share_passphrase[sizeof(s.share_passphrase) - 1] = '\0';
-                            }
-                        }
-                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Recipient must enter passphrase to decrypt");
-
-                        ImGui::Spacing();
-                        ImGui::Spacing();
-
-                        // Share button
-                        if (StyledButton("##share_go", ICON_MDI_SHARE_VARIANT "  Share", ImVec2(-1, 40)))
-                        {
-                            s.share_loading = true;
-                        }
-                    }
-
-                    ImGui::EndPopup();
-                }
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor(); // ModalWindowDimBg
-
-                if (!modal_open)
-                    s.show_share_vault_modal = false;
-            }
         }
         ImGui::EndChild();
         ImGui::PopStyleVar();

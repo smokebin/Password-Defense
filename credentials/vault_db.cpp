@@ -6,6 +6,8 @@
 #include "../tools/utility.h"
 
 #include <sqlite3.h>
+#define SODIUM_STATIC
+#include <sodium.h>
 // sqlite3.c compiled directly into project (no lib linking needed)
 
 #include <cstring>
@@ -542,110 +544,58 @@ namespace vault_db {
     }
 
     // ============================================================
-    // Key-value sync state
+    // Key-value metadata
     // ============================================================
-    std::string get_sync_state(const std::string& key)
+
+    std::string get_meta(const std::string& key)
     {
-        if (!g_db) return "";
-
-        const char* sql = "SELECT value FROM pm_sync_state WHERE key = ?";
-
-        sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            return "";
-        }
-
-        bind_text(stmt, 1, key);
-
         std::string result;
-        if (sqlite3_step(stmt) == SQLITE_ROW) {
-            const char* val = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-            if (val) result = val;
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(g_db, "SELECT value FROM pm_sync_state WHERE key = ?", -1, &stmt, nullptr) == SQLITE_OK)
+        {
+            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(stmt) == SQLITE_ROW)
+                result = (const char*)sqlite3_column_text(stmt, 0);
         }
-
         sqlite3_finalize(stmt);
         return result;
     }
 
-    bool set_sync_state(const std::string& key, const std::string& value)
+    bool set_meta(const std::string& key, const std::string& value)
     {
-        if (!g_db) return false;
-
-        const char* sql = "INSERT OR REPLACE INTO pm_sync_state (key, value) VALUES (?, ?)";
-
         sqlite3_stmt* stmt = nullptr;
-        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-            return false;
+        bool ok = false;
+        if (sqlite3_prepare_v2(g_db,
+            "INSERT OR REPLACE INTO pm_sync_state(key, value) VALUES(?, ?)",
+            -1, &stmt, nullptr) == SQLITE_OK)
+        {
+            sqlite3_bind_text(stmt, 1, key.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, value.c_str(), -1, SQLITE_TRANSIENT);
+            ok = (sqlite3_step(stmt) == SQLITE_DONE);
         }
-
-        bind_text(stmt, 1, key);
-        bind_text(stmt, 2, value);
-
-        bool ok = sqlite3_step(stmt) == SQLITE_DONE;
         sqlite3_finalize(stmt);
         return ok;
     }
 
-    int64_t get_last_server_rev()
-    {
-        std::string val = get_sync_state("last_server_rev");
-        if (val.empty()) return 0;
-        try {
-            return std::stoll(val);
-        } catch (...) {
-            return 0;
-        }
-    }
-
-    bool set_last_server_rev(int64_t rev)
-    {
-        return set_sync_state("last_server_rev", std::to_string(rev));
-    }
+    // ============================================================
+    // Salt caching
+    // ============================================================
 
     std::vector<uint8_t> get_cached_salt()
     {
-        std::string hex = get_sync_state("encryption_salt");
+        std::string hex = get_meta("encryption_salt");
         if (hex.empty()) return {};
-        return enc::hex_to_bytes(hex);
+        std::vector<uint8_t> salt(hex.size() / 2);
+        sodium_hex2bin(salt.data(), salt.size(), hex.c_str(), hex.size(), nullptr, nullptr, nullptr);
+        return salt;
     }
 
     bool set_cached_salt(const std::vector<uint8_t>& salt)
     {
-        return set_sync_state("encryption_salt", enc::bytes_to_hex(salt));
-    }
-
-    std::string get_vault_slug()
-    {
-        return get_sync_state("vault_slug");
-    }
-
-    bool set_vault_slug(const std::string& slug)
-    {
-        return set_sync_state("vault_slug", slug);
-    }
-
-    std::string read_vault_slug_from_file(const std::string& db_path)
-    {
-        sqlite3* temp_db = nullptr;
-        int rc = sqlite3_open_v2(db_path.c_str(), &temp_db, SQLITE_OPEN_READONLY, nullptr);
-        if (rc != SQLITE_OK || !temp_db) {
-            if (temp_db) sqlite3_close(temp_db);
-            return "";
-        }
-
-        std::string slug;
-        sqlite3_stmt* stmt = nullptr;
-        const char* sql = "SELECT value FROM pm_sync_state WHERE key = 'vault_slug'";
-        if (sqlite3_prepare_v2(temp_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-            if (sqlite3_step(stmt) == SQLITE_ROW) {
-                const char* val = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-                if (val) slug = val;
-            }
-            sqlite3_finalize(stmt);
-        }
-
-        sqlite3_close(temp_db);
-        return slug;
+        std::string hex(salt.size() * 2 + 1, '\0');
+        sodium_bin2hex(hex.data(), hex.size(), salt.data(), salt.size());
+        hex.resize(salt.size() * 2);
+        return set_meta("encryption_salt", hex);
     }
 
     // ============================================================
