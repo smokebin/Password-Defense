@@ -145,9 +145,6 @@
     <ClInclude Include="third_party\stb_image.h">
       <Filter>Header Files\resources</Filter>
     </ClInclude>
-    <ClInclude Include="tools\xor.h">
-      <Filter>tools</Filter>
-    </ClInclude>
     <ClInclude Include="third_party\imgui\imconfig.h">
       <Filter>gui\imgui</Filter>
     </ClInclude>
