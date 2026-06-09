@@ -1,5 +1,5 @@
 ﻿
-// application.cpp (Password Manager - ShellState + VaultState wired)
+// application.cpp — ShellState + VaultState wiring, vault I/O, UI tick logic
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -37,28 +37,26 @@
 
 // serialize_creds_json / deserialize_creds_json moved to app_import_export.cpp
 
-// Pin a buffer in physical RAM (prevent paging to disk)
+// VirtualLock pins the buffer in physical RAM so it can't be paged to the swap file.
 static void secure_lock(void* ptr, size_t len)
 {
     if (ptr && len > 0)
         VirtualLock(ptr, len);
 }
 
-// Unpin a buffer (allow paging again) — call before zeroing + freeing
+// Allow paging again — call before zeroing + freeing.
 static void secure_unlock(void* ptr, size_t len)
 {
     if (ptr && len > 0)
         VirtualUnlock(ptr, len);
 }
 
-// Lock a std::vector<uint8_t> in RAM (call after key derivation)
 static void lock_key(std::vector<uint8_t>& key)
 {
     if (!key.empty())
         secure_lock(key.data(), key.size());
 }
 
-// Unlock + zero + clear a key
 static void unlock_and_zero_key(std::vector<uint8_t>& key)
 {
     if (!key.empty())
@@ -69,14 +67,12 @@ static void unlock_and_zero_key(std::vector<uint8_t>& key)
     key.clear();
 }
 
-// Lock a std::string in RAM (call after password storage)
 static void lock_string(std::string& s)
 {
     if (!s.empty())
         secure_lock(s.data(), s.size());
 }
 
-// Unlock + zero + clear a string
 static void unlock_and_zero_string(std::string& s)
 {
     if (!s.empty())
@@ -87,7 +83,6 @@ static void unlock_and_zero_string(std::string& s)
     s.clear();
 }
 
-// Securely zero all sensitive fields of a Credential before destruction
 static void secure_clear_credential(Credential& c)
 {
     sodium_memzero(c.password.data(), c.password.size());
@@ -110,7 +105,6 @@ static void secure_clear_credential(Credential& c)
         sodium_memzero(h.password.data(), h.password.size());
 }
 
-// Securely zero all credentials in a vector, then clear it
 static void secure_clear_credentials(std::vector<Credential>& creds)
 {
     for (auto& c : creds)
@@ -118,7 +112,6 @@ static void secure_clear_credentials(std::vector<Credential>& creds)
     creds.clear();
 }
 
-// Securely zero all undo stack strings, then clear the stack
 static void secure_clear_undo_stack(std::vector<std::string>& stack)
 {
     for (auto& s : stack)
@@ -151,6 +144,11 @@ struct VaultState
     uint32_t last_groups_hash = 0;  // Per-vault group rebuild tracking
 
     std::string vault_path;              // .db file path
+
+    // External-change (sync) detection: on-disk file stamp captured after load/save
+    std::filesystem::file_time_type last_disk_mtime{};
+    uintmax_t   last_disk_size = 0;
+
     std::vector<uint8_t> master_key;     // Derived key (kept in memory while unlocked)
     std::string session_password;        // Password (kept for restore operations)
     std::string add_password_buf{};
@@ -207,9 +205,8 @@ struct VaultState
 
     void push_undo()
     {
-        // Store snapshot BEFORE change
         undo_stack.push_back(serialize_creds_json(creds));
-        // cap (optional) — securely zero evicted entry
+        // cap at 128; zero the evicted entry before erasing
         if (undo_stack.size() > 128)
         {
             sodium_memzero(undo_stack.front().data(), undo_stack.front().size());
@@ -224,11 +221,9 @@ struct VaultState
 
     void clear_sensitive()
     {
-        // Unlock from physical RAM, zero, and free
         unlock_and_zero_key(master_key);
         unlock_and_zero_string(session_password);
 
-        // Zero saved snapshot Credential data before clearing
         for (auto& [uuid, c] : saved_snapshot)
             secure_clear_credential(c);
         saved_snapshot.clear();
@@ -268,9 +263,6 @@ struct VaultState
     }
 };
 
-// ============================================================
-// Credential Modal: Unified Add/Edit dialog
-// ============================================================
 struct CredentialModal
 {
     enum class Mode { Closed, Add, Edit };
@@ -313,14 +305,13 @@ struct CredentialModal
         expiry_action_idx = 0;
         selected_type = CredType::Password;
         edit_id = -1;
-        // Keep gen_opt settings persistent
+        // gen_opt kept persistent across opens
     }
 
     void OpenEdit(const Credential& c, const std::string& pw)
     {
         mode = Mode::Edit;
         buf = c;
-        // Pre-format masked fields for display
         buf.card_number   = ui::FormatWithPattern(ui::StripNonDigits(c.card_number),   "#### #### #### ####");
         buf.card_expiry   = ui::FormatWithPattern(ui::StripNonDigits(c.card_expiry),   "## / ##");
         buf.date_of_birth = ui::FormatWithPattern(ui::StripNonDigits(c.date_of_birth), "## / ## / ####");
@@ -382,7 +373,6 @@ static bool g_backups_dirty = true;
 static VaultState g_vault;
 static ui::ShellState g_shell;
 
-// Forward declarations
 static std::string new_db_path();
 static std::vector<std::string> list_vaults_next_to_exe();
 
@@ -413,13 +403,12 @@ static VaultTab& ActiveTab()
 
 static VaultState& ActiveVault() { return ActiveTab().vault; }
 
-// Exposed for UI layer to access master key during 2FA setup
+// UI layer needs the master key when setting up 2FA.
 std::vector<uint8_t> Get2FAMasterKey()
 {
     return ActiveVault().master_key;
 }
 
-// Exposed for UI layer to access Credential list (Security Center modal)
 const std::vector<Credential>& GetActiveVaultCreds()
 {
     return ActiveVault().creds;
@@ -427,7 +416,7 @@ const std::vector<Credential>& GetActiveVaultCreds()
 
 static uint32_t GetVaultKey(const VaultTab& tab)
 {
-    // Use vault path if available, otherwise use stable tab_id
+    // prefer path-based key so identity survives tab reorder; fall back to stable tab_id
     if (!tab.vault.vault_path.empty())
         return helpers::fnv1a_32(tab.vault.vault_path.c_str());
     return tab.tab_id;
@@ -438,9 +427,6 @@ static uint32_t GetActiveVaultKey()
     return GetVaultKey(ActiveTab());
 }
 
-// ============================================================
-// Minimal WinHTTP helper for HIBP breach check
-// ============================================================
 #include <winhttp.h>
 #pragma comment(lib, "winhttp.lib")
 
@@ -483,12 +469,9 @@ static HttpResponse win_http_request(const char* method, const char* host, int p
     return r;
 }
 
-// ============================================================
-// HIBP Pwned Passwords breach check (k-anonymity, background thread)
-// ============================================================
+// HIBP k-anonymity breach check — runs on a background thread.
 static void CheckBreachedPasswords(ui::ShellState& shell, const std::vector<Credential>& creds)
 {
-    // Collect unique passwords → Credential IDs
     std::unordered_map<std::string, std::vector<int>> pw_to_ids;
     for (const auto& c : creds) {
         if (!c.is_deleted() && c.type == CredType::Password && !c.password.empty())
@@ -504,14 +487,12 @@ static void CheckBreachedPasswords(ui::ShellState& shell, const std::vector<Cred
         std::unordered_set<int> exposed_ids;
         int exposed_count = 0;
         int checked = 0;
-        std::string error;  // accumulate locally, write once at end
+        std::string error;  // accumulate locally; written to shell atomically at end
 
         for (const auto& [pw, ids] : pw_map) {
-            // SHA-1 hash the password
             uint8_t digest[20];
             totp::sha1_digest((const uint8_t*)pw.data(), pw.size(), digest);
 
-            // Convert to uppercase hex
             char hex[41];
             for (int i = 0; i < 20; i++)
                 snprintf(hex + i * 2, 3, "%02X", digest[i]);
@@ -520,12 +501,11 @@ static void CheckBreachedPasswords(ui::ShellState& shell, const std::vector<Cred
             std::string prefix(hex, 5);
             std::string suffix(hex + 5);
 
-            // Query HIBP k-anonymity API
             std::string path = "/range/" + prefix;
             auto resp = win_http_request("GET", "api.pwnedpasswords.com", 443, true, path);
 
             if (resp.success && resp.status_code == 200) {
-                // Parse: each line is "SUFFIX:COUNT\r\n"
+                // each line is "SUFFIX:COUNT\r\n"
                 size_t pos = 0;
                 while (pos < resp.body.size()) {
                     size_t eol = resp.body.find('\n', pos);
@@ -554,12 +534,10 @@ static void CheckBreachedPasswords(ui::ShellState& shell, const std::vector<Cred
             checked++;
             shell.sec_breach_checked = checked;
 
-            // Rate limit: 1.5s between requests (HIBP free tier)
-            Sleep(1500);
+            Sleep(1500);  // HIBP free tier: ~1 req/s
         }
 
-        // Write to staging fields (only touched by background thread).
-        // The UI thread will move these to live fields when it sees sec_breach_done.
+        // staging fields are only written here; UI thread promotes them on sec_breach_done
         shell.sec_exposed_ids_staging   = std::move(exposed_ids);
         shell.sec_exposed_count_staging = exposed_count;
         shell.sec_breach_error_staging  = std::move(error);
@@ -591,7 +569,6 @@ static void ResetScreen(ui::ShellState& shell, ui::Screen next)
 }
 
 
-// Generate path for new vault database next to exe
 static std::string new_db_path()
 {
     char exe_path_c[MAX_PATH];
@@ -613,7 +590,6 @@ static std::string new_db_path()
     return (exe_parent_path / ("vault-" + std::to_string(count) + ".db")).string();
 }
 
-// List all .db vault files next to the exe
 static std::vector<std::string> list_vaults_next_to_exe()
 {
     std::vector<std::string> vaults;
@@ -636,13 +612,165 @@ static std::vector<std::string> list_vaults_next_to_exe()
     }
     catch (...)
     {
-        // Directory iteration failed - return empty
+        // directory_iterator can throw on permission errors — just return empty
     }
 
-    // Sort alphabetically by filename
     std::sort(vaults.begin(), vaults.end());
 
     return vaults;
+}
+
+// Lowercase + forward-slash normalisation for case/slash-insensitive dedup.
+static std::string norm_vault_path(const std::string& p)
+{
+    std::string s = p;
+    for (char& c : s) {
+        if (c == '/') c = '\\';
+        if (c >= 'A' && c <= 'Z') c = char(c + 32);
+    }
+    return s;
+}
+
+// Friendly group label for the vault picker. Returns BESIDE APP, a known
+// sync-provider name, or the raw parent path as fallback.
+static std::string vault_group_label(const std::string& vault_path,
+                                     const std::filesystem::path& exe_dir)
+{
+    namespace fs = std::filesystem;
+    fs::path p(vault_path);
+    fs::path parent = p.parent_path();
+
+    // equivalent() handles symlinks/relative paths; string fallback for missing files
+    std::error_code ec;
+    if (fs::exists(parent, ec) && fs::exists(exe_dir, ec) &&
+        fs::equivalent(parent, exe_dir, ec))
+        return "BESIDE APP";
+    if (norm_vault_path(parent.string()) == norm_vault_path(exe_dir.string()))
+        return "BESIDE APP";
+
+    // known providers first — Dropbox\Backup\ → DROPBOX, not BACKUP
+    for (const auto& comp : parent)
+    {
+        std::string c = comp.string();
+        std::string low; low.reserve(c.size());
+        for (char ch : c) low += char((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
+
+        if (low == "dropbox")                                       return "DROPBOX";
+        if (low.rfind("onedrive", 0) == 0)                          return "ONEDRIVE";
+        if (low == "google drive" || low == "googledrive" ||
+            low == "my drive")                                      return "GOOGLE DRIVE";
+        if (low.rfind("icloud", 0) == 0)                            return "ICLOUD";
+        if (low == "box" || low == "box sync")                      return "BOX";
+        if (low == "mega" || low == "megasync")                     return "MEGA";
+        if (low == "pcloud" || low == "pcloud drive")               return "PCLOUD";
+        if (low == "sync")                                          return "SYNC";
+    }
+
+    // generic-drive heuristics — second pass so known providers win
+    for (const auto& comp : parent)
+    {
+        std::string c = comp.string();
+        std::string low; low.reserve(c.size());
+        for (char ch : c) low += char((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
+
+        if (low.find("usb")      != std::string::npos)              return "USB DRIVE";
+        if (low.find("external") != std::string::npos)              return "EXTERNAL";
+        if (low.find("backup")   != std::string::npos)              return "BACKUP";
+        if (low == "vault" || low == "vaults")                      return "VAULTS";
+    }
+
+    return parent.string();
+}
+
+static int vault_group_priority(const std::string& label)
+{
+    if (label == "BESIDE APP")    return 0;
+    if (label == "DROPBOX")       return 1;
+    if (label == "ONEDRIVE")      return 2;
+    if (label == "GOOGLE DRIVE")  return 3;
+    if (label == "ICLOUD")        return 4;
+    if (label == "BOX")           return 5;
+    if (label == "MEGA")          return 6;
+    if (label == "PCLOUD")        return 7;
+    if (label == "SYNC")          return 8;
+    if (label == "USB DRIVE")     return 50;
+    if (label == "EXTERNAL")      return 51;
+    if (label == "BACKUP")        return 52;
+    if (label == "VAULTS")        return 53;
+    return 100;  // raw-path fallback, sorted alphabetically
+}
+
+// Sub-path hint shown beside the filename: everything after the matched
+// provider component (e.g. Dropbox\Shared\Family). Empty for BESIDE APP,
+// single-level vaults, and raw-path fallback groups.
+static std::string vault_path_hint(const std::string& vault_path,
+                                   const std::filesystem::path& exe_dir,
+                                   const std::string& group_label)
+{
+    namespace fs = std::filesystem;
+    fs::path p(vault_path);
+    fs::path parent = p.parent_path();
+
+    if (group_label == "BESIDE APP") return "";
+
+    if (norm_vault_path(group_label) == norm_vault_path(parent.string())) return "";
+
+    auto matches = [](const std::string& low, const std::string& lbl) -> bool {
+        if (lbl == "DROPBOX")      return low == "dropbox";
+        if (lbl == "ONEDRIVE")     return low.rfind("onedrive", 0) == 0;
+        if (lbl == "GOOGLE DRIVE") return low == "google drive" || low == "googledrive" || low == "my drive";
+        if (lbl == "ICLOUD")       return low.rfind("icloud", 0) == 0;
+        if (lbl == "BOX")          return low == "box" || low == "box sync";
+        if (lbl == "MEGA")         return low == "mega" || low == "megasync";
+        if (lbl == "PCLOUD")       return low == "pcloud" || low == "pcloud drive";
+        if (lbl == "SYNC")         return low == "sync";
+        if (lbl == "USB DRIVE")    return low.find("usb")      != std::string::npos;
+        if (lbl == "EXTERNAL")     return low.find("external") != std::string::npos;
+        if (lbl == "BACKUP")       return low.find("backup")   != std::string::npos;
+        if (lbl == "VAULTS")       return low == "vault" || low == "vaults";
+        return false;
+    };
+
+    std::vector<std::string> components;
+    for (const auto& c : parent) components.push_back(c.string());
+
+    int match_idx = -1;
+    for (int i = 0; i < (int)components.size(); ++i)
+    {
+        std::string low; low.reserve(components[i].size());
+        for (char ch : components[i]) low += char((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
+        if (matches(low, group_label)) { match_idx = i; break; }
+    }
+
+    if (match_idx < 0 || match_idx + 1 >= (int)components.size()) return "";
+
+    std::string hint;
+    for (int i = match_idx + 1; i < (int)components.size(); ++i)
+    {
+        if (!hint.empty()) hint += "\\";
+        hint += components[i];
+    }
+
+    constexpr size_t kMaxHintLen = 28;
+    if (hint.size() > kMaxHintLen)
+        hint = "…" + hint.substr(hint.size() - (kMaxHintLen - 1));
+    return hint;
+}
+
+// Combines exe-dir scan with remembered recent/external vaults, deduped.
+// Missing recent entries are kept so the user can remove them.
+static std::vector<std::string> build_vault_list()
+{
+    std::vector<std::string> out = list_vaults_next_to_exe();
+
+    std::unordered_set<std::string> seen;
+    for (const auto& p : out) seen.insert(norm_vault_path(p));
+
+    for (const auto& p : cfg::get_recent_vaults())
+        if (seen.insert(norm_vault_path(p)).second)
+            out.push_back(p);
+
+    return out;
 }
 
 static std::string BasenameNoExt(const std::string& path)
@@ -662,7 +790,6 @@ static void CreatePreOpBackup(const VaultState& v, const char* tag)
 
     std::string dir = helpers::GetDefaultBackupDir();
 
-    // Ensure backup directory exists
     helpers::create_directories(dir);
 
     std::string base = BasenameNoExt(v.vault_path);
@@ -705,6 +832,7 @@ static void HandleOpenDB()
 {
     std::string path = PickOpenFilePath_DB();
     if (path.empty()) return;
+    cfg::add_recent_vault(path);
 
     int existing = FindTabByPath(path);
     if (existing != -1)
@@ -722,13 +850,13 @@ static void HandleOpenDB()
     g_tabs.push_back(std::move(t));
     g_active_tab = (int)g_tabs.size() - 1;
 
-    // No need to clear UI state for brand new vault (no state exists yet)
 }
 
 static void HandleNewDB()
 {
     std::string path = PickSaveFilePath_DB();
     if (path.empty()) return;
+    cfg::add_recent_vault(path);
 
     int existing = FindTabByPath(path);
     if (existing != -1)
@@ -746,7 +874,6 @@ static void HandleNewDB()
     g_tabs.push_back(std::move(t));
     g_active_tab = (int)g_tabs.size() - 1;
 
-    // No need to clear UI state for brand new vault (no state exists yet)
 }
 
 static uint32_t HashGroupsOnly(const std::vector<Credential>& creds)
@@ -762,8 +889,6 @@ static uint32_t HashGroupsOnly(const std::vector<Credential>& creds)
 
 static uint32_t HashCredsNow(const std::vector<Credential>& creds)
 {
-    // Serialize ONLY when we explicitly decide to refresh dirty state.
-    // (not every frame)
     std::string json = serialize_creds_json(creds);
     return helpers::fnv1a_32(json.c_str());
 }
@@ -780,8 +905,7 @@ static void VaultMarkSaved(VaultState& v)
     v.current_hash = v.saved_hash;
     v.dirty = false;
 
-    // Rebuild saved snapshot for change highlighting
-    v.saved_snapshot.clear();
+    v.saved_snapshot.clear();  // rebuilt for per-row change highlighting
     for (const auto& c : v.creds)
     {
         if (!c.uuid.empty())
@@ -791,13 +915,12 @@ static void VaultMarkSaved(VaultState& v)
 
 static void VaultMarkChanged(VaultState& v, const char* preTagForBackup)
 {
-    // If we are currently clean, take the one-time "first edit" safety backup.
+    // first edit after a clean save — snapshot before anything is changed
     if (!v.dirty && v.unlocked && !v.vault_path.empty())
         CreatePreOpBackup(v, preTagForBackup ? preTagForBackup : "EDIT");
 
     VaultRecomputeDirty(v);
 
-    // Your autosave debounce uses this
     g_autosave.last_change_time = ImGui::GetTime();
 }
 
@@ -820,7 +943,6 @@ static void rebuild_groups(ui::ShellState& s, const std::vector<Credential>& cre
     out.push_back("@Notes");
     out.push_back("---");  // separator sentinel
 
-    // stable-ish order
     std::vector<std::string> tmp;
     tmp.reserve(uniq.size());
     for (const auto& g : uniq) tmp.push_back(g);
@@ -830,7 +952,6 @@ static void rebuild_groups(ui::ShellState& s, const std::vector<Credential>& cre
 
     s.groups = std::move(out);
 
-    // Prune selected_groups to only contain groups that still exist
     std::set<std::string> pruned;
     for (const auto& g : s.selected_groups)
         if (std::find(s.groups.begin(), s.groups.end(), g) != s.groups.end())
@@ -849,7 +970,6 @@ static void rebuild_tags(ui::ShellState& s, const std::vector<Credential>& creds
     std::sort(out.begin(), out.end());
     s.all_tags = std::move(out);
 
-    // Prune selected_tags to only contain tags that still exist
     std::set<std::string> pruned;
     for (const auto& t : s.selected_tags)
         if (std::find(s.all_tags.begin(), s.all_tags.end(), t) != s.all_tags.end())
@@ -857,7 +977,6 @@ static void rebuild_tags(ui::ShellState& s, const std::vector<Credential>& creds
     s.selected_tags = std::move(pruned);
 }
 
-// Called from UI trash modal after restoring a Credential
 void ReloadVaultCredentials()
 {
     VaultState& v = ActiveVault();
@@ -869,9 +988,6 @@ void ReloadVaultCredentials()
     ui::ForgetVaultRowState(GetActiveVaultKey());
 }
 
-// ============================================================
-// Tag editor widget with autocomplete
-// ============================================================
 static void render_tag_editor(float width)
 {
     auto& tags = g_cred_modal.buf.tags;
@@ -883,7 +999,6 @@ static void render_tag_editor(float width)
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-    // Render existing tag pills
     float startX = ImGui::GetCursorScreenPos().x;
     float curX = startX;
     float curY = ImGui::GetCursorScreenPos().y;
@@ -897,7 +1012,6 @@ static void render_tag_editor(float width)
         ImVec2 xSz = ImGui::CalcTextSize(ICON_MDI_CLOSE);
         float pillW = pillPad * 2 + tSz.x + 4.0f + xSz.x + 2.0f;
 
-        // Wrap to next line if needed
         if (curX + pillW > maxX && curX > startX)
         {
             curX = startX;
@@ -907,25 +1021,21 @@ static void render_tag_editor(float width)
         ImVec2 pMin(curX, curY);
         ImVec2 pMax(curX + pillW, curY + pillH);
 
-        // Pill background
         ImU32 pillBg = dark ? IM_COL32(255, 255, 255, 20) : IM_COL32(0, 0, 0, 15);
         dl->AddRectFilled(pMin, pMax, pillBg, pillRounding);
 
-        // Tag text
         float textY = curY + (pillH - tSz.y) * 0.5f;
         dl->AddText(ImVec2(curX + pillPad, textY), ImGui::GetColorU32(ImGuiCol_Text), t.c_str());
 
-        // X button
         float xX = curX + pillPad + tSz.x + 4.0f;
         dl->AddText(ImVec2(xX, textY), ImGui::GetColorU32(ImGuiCol_TextDisabled), ICON_MDI_CLOSE);
 
-        // Invisible button for the whole pill to remove
         ImGui::SetCursorScreenPos(pMin);
         char btnId[32];
         snprintf(btnId, sizeof(btnId), "##tagpill_%d", i);
         ImGui::InvisibleButton(btnId, ImVec2(pillW, pillH));
         if (ImGui::IsItemClicked()) removeIdx = i;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Remove tag");
+        if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Remove tag");
 
         curX += pillW + pillGap;
     }
@@ -933,17 +1043,14 @@ static void render_tag_editor(float width)
     if (removeIdx >= 0)
         tags.erase(tags.begin() + removeIdx);
 
-    // Move cursor to after pills
     if (!tags.empty())
     {
         curY += pillH + 4.0f;
         ImGui::SetCursorScreenPos(ImVec2(startX, curY));
     }
 
-    // Tag input — type and press Enter, or pick from dropdown button
     {
-        // Available tags (exclude already-added)
-        std::vector<std::string> availTags;
+        std::vector<std::string> availTags;  // exclude already-added tags
         for (const auto& t : g_shell.all_tags)
         {
             bool already = false;
@@ -978,13 +1085,11 @@ static void render_tag_editor(float width)
     }
 }
 
-// Group input with searchable combo dropdown
 static void render_group_input(float width)
 {
     auto& group = g_cred_modal.buf.group;
 
-    // Build filtered group list (exclude system entries)
-    std::vector<std::string> userGroups;
+    std::vector<std::string> userGroups;  // strip @-prefixed types and sentinels
     for (const auto& g : g_shell.groups)
     {
         if (g.empty() || g[0] == '@' || g == "---" || g == "Filter" || g == "All") continue;
@@ -995,9 +1100,6 @@ static void render_group_input(float width)
     ui::SearchableCombo("Group##modal_group", group, userGroups, &g_shell.sb_group_counts);
 }
 
-// ============================================================
-// Credential Modal Rendering
-// ============================================================
 static void render_credential_modal(VaultState& v)
 {
     if (!g_cred_modal.IsOpen()) return;
@@ -1012,25 +1114,21 @@ static void render_credential_modal(VaultState& v)
         90 * time_ms::DAY,          //  90 days
     };
 
-    // Theme-aware modal colors
     const bool dark = g_shell.dark_theme;
     const ImU32 popupBg = dark
         ? theme::ModalBg.dark
         : theme::ModalBg.light;
-    const ImU32 dimBg = colors::DimOverlayLight;  // Same for both themes
+    const ImU32 dimBg = colors::DimOverlayLight;
 
-    // Styling
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24, 20));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
     ImGui::PushStyleColor(ImGuiCol_PopupBg, popupBg);
     ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, dimBg);
 
-    // Fixed width, auto height — wider to accommodate two-column layout
-    const float modalW = 560.0f;
+    const float modalW = 560.0f;  // wide enough for two-column layout
     ImGui::SetNextWindowSizeConstraints(ImVec2(modalW, 0), ImVec2(modalW, FLT_MAX));
 
-    // Re-center on every frame so the modal follows window resizes
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
@@ -1038,19 +1136,15 @@ static void render_credential_modal(VaultState& v)
     if (ImGui::BeginPopupModal("Add/Edit###cred_modal", &modal_open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
     {
 
-        // Keyboard shortcuts
         bool escape_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
         bool submit_shortcut = ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyPressed(ImGuiKey_Enter);
 
-        // Form fields
         const float fieldW = ImGui::GetContentRegionAvail().x;
 
-        // Header with close button
         ImGui::PushFont(render::FontLarge);
         ImGui::TextUnformatted(g_cred_modal.IsAdd() ? "Add Credential" : "Edit Credential");
         ImGui::PopFont();
         {
-            // Close text
             ImVec2 closeSz = ImGui::CalcTextSize(ICON_MDI_CLOSE);
             ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - closeSz.x);
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
@@ -1066,7 +1160,6 @@ static void render_credential_modal(VaultState& v)
         }
         ImGui::Dummy(ImVec2(0, 8));
 
-        // Type selector (Add mode: interactive buttons, Edit mode: read-only label)
         {
             const CredType ct = g_cred_modal.selected_type;
             if (g_cred_modal.IsAdd())
@@ -1086,7 +1179,6 @@ static void render_credential_modal(VaultState& v)
                 const float pillPad = 2.0f;
                 bool dark = g_shell.dark_theme;
 
-                // Pill background
                 ImU32 pillBg = dark ? IM_COL32(40, 40, 44, 255) : IM_COL32(232, 232, 236, 255);
                 ImU32 cardBg = dark ? IM_COL32(60, 60, 66, 255) : IM_COL32(255, 255, 255, 255);
                 ImU32 cardShadow = dark ? IM_COL32(0, 0, 0, 70) : IM_COL32(0, 0, 0, 35);
@@ -1095,18 +1187,14 @@ static void render_credential_modal(VaultState& v)
                 ImVec2 pillPos = ImGui::GetCursorScreenPos();
                 float pillW = fieldW;
 
-                // Draw pill background
                 dl->AddRectFilled(pillPos, ImVec2(pillPos.x + pillW, pillPos.y + tabH), pillBg, pillR);
 
-                // Segment width
                 float segW = pillW / numTabs;
 
-                // Find active index
                 int activeIdx = 0;
                 for (int i = 0; i < numTabs; i++)
                     if (ct == btns[i].t) { activeIdx = i; break; }
 
-                // Draw active card (raised, with shadow)
                 {
                     float cardX = pillPos.x + activeIdx * segW + pillPad;
                     float cardY = pillPos.y + pillPad;
@@ -1115,16 +1203,13 @@ static void render_credential_modal(VaultState& v)
                     ImVec2 cMin(cardX, cardY);
                     ImVec2 cMax(cardX + cardW, cardY + cardH);
 
-                    // Shadow
                     dl->AddRectFilled(
                         ImVec2(cMin.x + 0.5f, cMin.y + 1.0f),
                         ImVec2(cMax.x + 0.5f, cMax.y + 1.0f),
                         cardShadow, cardR);
-                    // Card fill
                     dl->AddRectFilled(cMin, cMax, cardBg, cardR);
                 }
 
-                // Hit test + text for each segment
                 for (int i = 0; i < numTabs; i++)
                 {
                     bool active = (ct == btns[i].t);
@@ -1139,7 +1224,6 @@ static void render_credential_modal(VaultState& v)
                         g_cred_modal.selected_type = btns[i].t;
                     ImGui::PopID();
 
-                    // Hover highlight on inactive
                     if (hovered && !active)
                     {
                         ImU32 hovCol = dark ? IM_COL32(255, 255, 255, 10) : IM_COL32(0, 0, 0, 8);
@@ -1149,7 +1233,6 @@ static void render_credential_modal(VaultState& v)
                             hovCol, cardR);
                     }
 
-                    // Text
                     char lbl[48]; snprintf(lbl, sizeof(lbl), "%s %s", btns[i].icon, btns[i].label);
                     ImVec2 ts = ImGui::CalcTextSize(lbl);
                     ImVec2 tp(segX + (segW - ts.x) * 0.5f, pillPos.y + (tabH - ts.y) * 0.5f);
@@ -1171,19 +1254,15 @@ static void render_credential_modal(VaultState& v)
 
         const CredType ct = g_cred_modal.selected_type;
 
-        // Two-column layout helpers
         const float colGap = 12.0f;
         const float halfW = (fieldW - colGap) * 0.5f;
 
-        // Title (all types) — full width
         ImGui::SetNextItemWidth(fieldW);
         ui::InputTextString("Title##modal_title", &g_cred_modal.buf.title);
         ImGui::Spacing();
 
-        // Type-specific fields — two columns where possible
         if (ct == CredType::Password)
         {
-            // Row 1: Email | User
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextString("Email##modal_email", &g_cred_modal.buf.email);
             ImGui::SameLine(0, colGap);
@@ -1191,17 +1270,14 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("User##modal_user", &g_cred_modal.buf.user);
             ImGui::Spacing();
 
-            // Row 2: Password (full width — has icon buttons)
             ui::PasswordFieldRow("##modal_pw", g_cred_modal.password_buf,
                 g_cred_modal.show_password, g_cred_modal.gen_opt, fieldW);
             ImGui::Spacing();
 
-            // Row 3: Website (full width)
             ImGui::SetNextItemWidth(fieldW);
             ui::InputTextString("Website##modal_website", &g_cred_modal.buf.website);
             ImGui::Spacing();
 
-            // Row 4: Group | Tags
             render_group_input(halfW);
             ImGui::SameLine(0, colGap);
             render_tag_editor(halfW);
@@ -1209,7 +1285,6 @@ static void render_credential_modal(VaultState& v)
         }
         else if (ct == CredType::CreditCard)
         {
-            // Row 1: Cardholder | Brand
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextString("Cardholder Name##modal_cardholder", &g_cred_modal.buf.cardholder_name);
             ImGui::SameLine(0, colGap);
@@ -1217,7 +1292,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("Brand##modal_brand", &g_cred_modal.buf.card_brand);
             ImGui::Spacing();
 
-            // Row 2: Card Number | Street Address
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextFormatted("Card Number##modal_cardnum", &g_cred_modal.buf.card_number, "#### #### #### ####");
             ImGui::SameLine(0, colGap);
@@ -1225,7 +1299,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("Street Address##modal_card_addr", &g_cred_modal.buf.card_address);
             ImGui::Spacing();
 
-            // Row 3: Expiry | CVV
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextFormatted("Expiry (MM/YY)##modal_expiry", &g_cred_modal.buf.card_expiry, "## / ##");
             ImGui::SameLine(0, colGap);
@@ -1233,7 +1306,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("CVV##modal_cvv", &g_cred_modal.buf.card_cvv);
             ImGui::Spacing();
 
-            // Row 4: City | Postal Code
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextString("City##modal_card_city", &g_cred_modal.buf.card_city);
             ImGui::SameLine(0, colGap);
@@ -1241,7 +1313,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("Postal Code##modal_card_postal", &g_cred_modal.buf.card_postal_code);
             ImGui::Spacing();
 
-            // Row 6: Group | Tags
             render_group_input(halfW);
             ImGui::SameLine(0, colGap);
             render_tag_editor(halfW);
@@ -1249,7 +1320,6 @@ static void render_credential_modal(VaultState& v)
         }
         else if (ct == CredType::Identity)
         {
-            // Row 1: Full Name | Country
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextString("Full Name##modal_fullname", &g_cred_modal.buf.full_name);
             ImGui::SameLine(0, colGap);
@@ -1257,7 +1327,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("Country##modal_country", &g_cred_modal.buf.country);
             ImGui::Spacing();
 
-            // Row 2: ID Type | ID Number
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextString("ID Type##modal_idtype", &g_cred_modal.buf.id_type);
             ImGui::SameLine(0, colGap);
@@ -1265,7 +1334,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("ID Number##modal_idnum", &g_cred_modal.buf.id_number);
             ImGui::Spacing();
 
-            // Row 3: Date of Birth | Expiry
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextFormatted("Date of Birth##modal_dob", &g_cred_modal.buf.date_of_birth, "## / ## / ####");
             ImGui::SameLine(0, colGap);
@@ -1273,7 +1341,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextFormatted("Expiry##modal_idexpiry", &g_cred_modal.buf.expiry_date, "## / ## / ####");
             ImGui::Spacing();
 
-            // Row 4: Address | Phone
             ImGui::SetNextItemWidth(halfW);
             ui::InputTextString("Address##modal_address", &g_cred_modal.buf.address);
             ImGui::SameLine(0, colGap);
@@ -1281,7 +1348,6 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextFormatted("Phone##modal_phone", &g_cred_modal.buf.phone, "(###) ###-####");
             ImGui::Spacing();
 
-            // Row 5: Group | Tags
             render_group_input(halfW);
             ImGui::SameLine(0, colGap);
             render_tag_editor(halfW);
@@ -1289,14 +1355,12 @@ static void render_credential_modal(VaultState& v)
         }
         else
         {
-            // SecureNote: Group | Tags
             render_group_input(halfW);
             ImGui::SameLine(0, colGap);
             render_tag_editor(halfW);
             ImGui::Spacing();
         }
 
-        // Notes (all types, full width — larger for SecureNote)
         ImGui::TextDisabled("Notes");
         float notesH = (ct == CredType::SecureNote) ? 180.0f : 60.0f;
         ui::InputTextMultilineString("##modal_notes", &g_cred_modal.buf.notes,
@@ -1304,14 +1368,13 @@ static void render_credential_modal(VaultState& v)
 
         ImGui::Spacing();
 
-        // TOTP Secret field (Password type only)
         if (ct == CredType::Password)
         {
             //ImGui::TextDisabled(ICON_MDI_CLOCK " TOTP Secret");
             ImGui::SetNextItemWidth(fieldW - 110.0f);
             ui::InputTextString(ICON_MDI_CLOCK " TOTP Secret", &g_cred_modal.totp_secret_buf);
 
-            // Auto-parse otpauth:// URIs on paste
+            // auto-parse otpauth:// URIs on paste
             if (!g_cred_modal.totp_secret_buf.empty() &&
                 g_cred_modal.totp_secret_buf.size() > 15 &&
                 g_cred_modal.totp_secret_buf.find("otpauth://") != std::string::npos)
@@ -1321,7 +1384,6 @@ static void render_credential_modal(VaultState& v)
                     g_cred_modal.totp_secret_buf = parsed;
             }
 
-            // Live preview of current code
             if (!g_cred_modal.totp_secret_buf.empty())
             {
                 auto bytes = totp::base32_decode(g_cred_modal.totp_secret_buf);
@@ -1337,7 +1399,6 @@ static void render_credential_modal(VaultState& v)
             }
         }
 
-        // Password age indicator (edit mode, Password type, when flagged as aging)
         if (g_cred_modal.IsEdit() && ct == CredType::Password &&
             g_shell.sec_aging_ids.count(g_cred_modal.edit_id))
         {
@@ -1387,7 +1448,6 @@ static void render_credential_modal(VaultState& v)
                 &g_cred_modal.expiry_action_idx, 110.0f, 28.0f, true);
         }
 
-        // Validation (per type)
         bool can_submit = false;
         switch (ct)
         {
@@ -1410,9 +1470,88 @@ static void render_credential_modal(VaultState& v)
             break;
         }
 
-        // Submit button - same line as checkboxes, right flushed
+        struct Collisions {
+            bool reused = false; int reuse_count = 0;
+            bool dup_title = false; bool dup_account = false;
+            bool any() const { return reused || dup_title || dup_account; }
+        } coll;
+        {
+            auto trim_lower = [](std::string s) {
+                size_t b = s.find_first_not_of(" \t\r\n");
+                if (b == std::string::npos) return std::string();
+                size_t e = s.find_last_not_of(" \t\r\n");
+                s = s.substr(b, e - b + 1);
+                for (char& ch : s) if (ch >= 'A' && ch <= 'Z') ch = char(ch + 32);
+                return s;
+            };
+            auto norm_site = [&](std::string s) {
+                s = trim_lower(s);
+                for (const char* pre : { "https://", "http://" })
+                    if (s.rfind(pre, 0) == 0) { s.erase(0, std::string(pre).size()); break; }
+                if (s.rfind("www.", 0) == 0) s.erase(0, 4);
+                while (!s.empty() && s.back() == '/') s.pop_back();
+                return s;
+            };
+
+            const std::string my_title = trim_lower(g_cred_modal.buf.title);
+            const std::string& my_pw   = g_cred_modal.password_buf;
+            const std::string my_site  = norm_site(g_cred_modal.buf.website);
+            const std::string my_email = trim_lower(g_cred_modal.buf.email);
+            const std::string my_user  = trim_lower(g_cred_modal.buf.user);
+            const bool is_pw_type = (ct == CredType::Password);
+
+            for (const auto& c : v.creds) {
+                if (c.is_deleted()) continue;
+                if (g_cred_modal.IsEdit() && c.id == g_cred_modal.edit_id) continue; // skip self
+
+                if (!my_title.empty() && trim_lower(c.title) == my_title)
+                    coll.dup_title = true;
+
+                if (is_pw_type && c.type == CredType::Password) {
+                    if (!my_pw.empty() && c.password == my_pw) {
+                        coll.reused = true; coll.reuse_count++;
+                    }
+                    // same login on same service — matched by site or title
+                    const bool same_email = !my_email.empty() && trim_lower(c.email) == my_email;
+                    const bool same_user  = !my_user.empty()  && trim_lower(c.user)  == my_user;
+                    const bool same_site  = !my_site.empty()  && norm_site(c.website) == my_site;
+                    const bool same_title = !my_title.empty() && trim_lower(c.title)  == my_title;
+                    if ((same_email || same_user) && (same_site || same_title))
+                        coll.dup_account = true;
+                }
+            }
+        }
+
         const float btnW = 80.0f;
         const float btnH = 32.0f;
+
+        if (coll.any())
+        {
+            const float iconW = ImGui::CalcTextSize(ICON_MDI_ALERT).x;
+            ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - btnW - 10.0f - iconW);
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (btnH - ImGui::GetTextLineHeight()) * 0.5f);
+            ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.20f, 1.0f), ICON_MDI_ALERT);
+            if (ImGui::IsItemHovered())
+            {
+                std::string tip;
+                if (coll.reused) {
+                    char line[80];
+                    snprintf(line, sizeof(line), "This password is reused by %d other %s",
+                             coll.reuse_count, coll.reuse_count == 1 ? "entry" : "entries");
+                    tip += line;
+                }
+                if (coll.dup_title) {
+                    if (!tip.empty()) tip += "\n";
+                    tip += "Another entry already uses this title";
+                }
+                if (coll.dup_account) {
+                    if (!tip.empty()) tip += "\n";
+                    tip += "A duplicate account with this username/email already exists";
+                }
+                ui::SetTooltipPadded("%s", tip.c_str());
+            }
+        }
+
         ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - btnW);
 
         ImGui::BeginDisabled(!can_submit);
@@ -1426,7 +1565,6 @@ static void render_credential_modal(VaultState& v)
             if (g_cred_modal.IsAdd())
             {
                 Credential c = g_cred_modal.buf;
-                // Strip formatting from masked fields
                 c.card_number   = ui::StripNonDigits(c.card_number);
                 c.card_expiry   = ui::StripNonDigits(c.card_expiry);
                 c.date_of_birth = ui::StripNonDigits(c.date_of_birth);
@@ -1438,7 +1576,6 @@ static void render_credential_modal(VaultState& v)
                 c.is_pinned = g_cred_modal.is_pinned;
                 c.is_favorite = g_cred_modal.is_favorite;
 
-                // Per-Credential timer
                 {
                     if (g_cred_modal.is_timed) {
                         int64_t now = helpers::now_unix_ms();
@@ -1450,7 +1587,6 @@ static void render_credential_modal(VaultState& v)
                     }
                 }
 
-                // Assign next available ID
                 int max_id = 0;
                 for (const auto& cr : v.creds)
                     if (cr.id > max_id) max_id = cr.id;
@@ -1471,7 +1607,6 @@ static void render_credential_modal(VaultState& v)
                 {
                     if (c.id == g_cred_modal.edit_id)
                     {
-                        // Record password history if password actually changed
                         if (!c.password.empty() && c.password != g_cred_modal.password_buf) {
                             Credential::PasswordHistoryEntry entry;
                             entry.password = c.password;
@@ -1492,7 +1627,6 @@ static void render_credential_modal(VaultState& v)
                         c.totp_secret = g_cred_modal.totp_secret_buf;
                         c.is_pinned = g_cred_modal.is_pinned;
                         c.is_favorite = g_cred_modal.is_favorite;
-                        // Per-Credential timer
                         if (g_cred_modal.is_timed) {
                             c.expires_at_ms = helpers::now_unix_ms() + timer_dur_ms[g_cred_modal.duration_idx];
                             c.expiry_action = g_cred_modal.expiry_action_idx;
@@ -1500,7 +1634,6 @@ static void render_credential_modal(VaultState& v)
                             c.expires_at_ms = 0;
                             c.expiry_action = 0;
                         }
-                        // Type is immutable after creation (c.type unchanged)
                         c.card_number     = ui::StripNonDigits(g_cred_modal.buf.card_number);
                         c.card_expiry     = ui::StripNonDigits(g_cred_modal.buf.card_expiry);
                         c.card_cvv        = g_cred_modal.buf.card_cvv;
@@ -1534,7 +1667,7 @@ static void render_credential_modal(VaultState& v)
         ImGui::EndDisabled();
 
         if (ImGui::IsItemHovered() && can_submit)
-            ImGui::SetTooltip("Ctrl+Enter");
+            ui::SetTooltipPadded("Ctrl+Enter");
 
         ImGui::EndPopup();
     }
@@ -1556,10 +1689,40 @@ static const char* GetPasswordForRow(int id)
     return "";
 }
 
-// Forward declaration for auto-lock timer (defined with TickAutoLock)
 namespace {
     double g_last_activity_time = 0.0;
     ImVec2 g_last_mouse_pos = ImVec2(0, 0);
+}
+
+// external-change (sync) detection state
+static bool g_vault_conflict = false;       // a sync changed the file under us
+static bool g_conflict_force_save = false;   // user chose "Overwrite" — bypass the guard once
+
+static void capture_disk_stamp(VaultState& v)
+{
+    v.last_disk_mtime = {};
+    v.last_disk_size = 0;
+    if (v.vault_path.empty() || v.vault_path == "NONE") return;
+    std::error_code ec;
+    auto mt = std::filesystem::last_write_time(v.vault_path, ec);
+    if (ec) return;
+    auto sz = std::filesystem::file_size(v.vault_path, ec);
+    if (ec) return;
+    v.last_disk_mtime = mt;
+    v.last_disk_size = (uintmax_t)sz;
+}
+
+// true if the on-disk file changed since we last stamped it (sync from another device)
+static bool disk_stamp_changed(const VaultState& v)
+{
+    if (v.last_disk_size == 0) return false;   // never stamped — don't false-alarm
+    if (v.vault_path.empty() || v.vault_path == "NONE") return false;
+    std::error_code ec;
+    auto mt = std::filesystem::last_write_time(v.vault_path, ec);
+    if (ec) return false;
+    auto sz = std::filesystem::file_size(v.vault_path, ec);
+    if (ec) return false;
+    return mt != v.last_disk_mtime || (uintmax_t)sz != v.last_disk_size;
 }
 
 static bool load_vault_from_disk(const std::string& path, const std::string& password, VaultState& v)
@@ -1572,21 +1735,18 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         return false;
     }
 
-    // Close any previously open vault
     vault_db::close();
 
-    // Open the SQLite database
     if (!vault_db::init(path))
     {
         v.set_status("Failed to open vault database.", true);
         return false;
     }
 
-    // Integrity check — warn but allow access (user may want to salvage data)
+    // warn on corruption but let the user in so they can salvage data
     if (!vault_db::quick_integrity_check())
         v.set_status("Warning: database may be corrupted. Consider restoring from backup.", true);
 
-    // Get cached salt
     std::vector<uint8_t> salt = vault_db::get_cached_salt();
     if (salt.empty())
     {
@@ -1595,10 +1755,8 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         return false;
     }
 
-    // Check stored KDF level (defaults to moderate for legacy vaults)
-    bool high_sec = (vault_db::get_meta("kdf_level") == "sensitive");
+    bool high_sec = (vault_db::get_meta("kdf_level") == "sensitive");  // legacy vaults default to moderate
 
-    // Derive master key from password + salt
     std::vector<uint8_t> master_key = enc::derive_master_key(password, salt, high_sec);
     if (master_key.empty())
     {
@@ -1607,10 +1765,9 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         return false;
     }
 
-    // Load all credentials
     std::vector<Credential> creds = cred_ops::load_all(master_key);
 
-    // If we have credentials in DB but couldn't decrypt any, password is likely wrong
+    // credentials in DB but none decrypted → wrong password
     if (creds.empty() && vault_db::count_credentials() > 0)
     {
         enc::secure_zero(master_key);
@@ -1621,12 +1778,12 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
 
     v.vault_path = path;
     v.master_key = std::move(master_key);
-    lock_key(v.master_key);            // pin in physical RAM
-    v.session_password = password;     // Keep for restore operations
-    lock_string(v.session_password);   // pin in physical RAM
+    lock_key(v.master_key);
+    v.session_password = password;     // kept for backup-restore re-open
+    lock_string(v.session_password);
     v.creds = std::move(creds);
 
-    // Auto-purge old trash items
+    // auto-purge old trash items
     {
         int days = cfg::get_trash_retention_days();
         if (days > 0) {
@@ -1635,7 +1792,6 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         }
     }
 
-    // Check if 2FA is enabled — if so, defer full unlock
     if (twofa_ops::is_enabled())
     {
         v.tofa_pending = true;
@@ -1648,14 +1804,14 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
     secure_clear_undo_stack(v.undo_stack);
     v.unlocked = true;
 
-    // Set up re-prompt security
     ui::SetRepromptMasterPassword(password);
     ui::ResetRepromptLockout();
 
     g_autosave.last_change_time = ImGui::GetTime();
     g_autosave.last_save_time = ImGui::GetTime();
-    g_last_activity_time = ImGui::GetTime(); // Reset auto-lock timer
+    g_last_activity_time = ImGui::GetTime();
 
+    capture_disk_stamp(v);
     v.set_status("Vault unlocked.", false);
     return true;
 }
@@ -1664,10 +1820,7 @@ static void complete_2fa_unlock(const std::string& code, VaultState& v)
 {
     if (!v.tofa_pending) return;
 
-    // Try TOTP first
     bool ok = twofa_ops::verify_totp(code, v.master_key);
-
-    // If TOTP fails, try recovery code
     if (!ok)
         ok = twofa_ops::verify_recovery(code, v.master_key);
 
@@ -1677,7 +1830,6 @@ static void complete_2fa_unlock(const std::string& code, VaultState& v)
         return;
     }
 
-    // Success — complete the unlock
     VaultMarkSaved(v);
 
     secure_clear_undo_stack(v.undo_stack);
@@ -1704,17 +1856,14 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
         return false;
     }
 
-    // Close any previously open vault
     vault_db::close();
 
-    // Create new SQLite database
     if (!vault_db::init(path))
     {
         v.set_status("Failed to create vault database.", true);
         return false;
     }
 
-    // Generate new salt
     std::vector<uint8_t> salt = enc::generate_salt();
 
     if (!vault_db::set_cached_salt(salt))
@@ -1724,7 +1873,6 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
         return false;
     }
 
-    // Derive master key from password + salt
     bool high_sec = cfg::get_high_security_kdf();
     std::vector<uint8_t> master_key = enc::derive_master_key(password, salt, high_sec);
     if (master_key.empty())
@@ -1734,14 +1882,13 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
         return false;
     }
 
-    // Store KDF level in vault for future reference
-    vault_db::set_meta("kdf_level", high_sec ? "sensitive" : "moderate");
+    vault_db::set_meta("kdf_level", high_sec ? "sensitive" : "moderate");  // read back on next open
 
     v.vault_path = path;
     v.master_key = std::move(master_key);
-    lock_key(v.master_key);            // pin in physical RAM
-    v.session_password = password;     // Keep for restore operations
-    lock_string(v.session_password);   // pin in physical RAM
+    lock_key(v.master_key);
+    v.session_password = password;
+    lock_string(v.session_password);
     v.creds.clear();
 
     VaultMarkSaved(v);
@@ -1749,35 +1896,30 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
     secure_clear_undo_stack(v.undo_stack);
     v.unlocked = true;
 
-    // Set up re-prompt security
     ui::SetRepromptMasterPassword(password);
     ui::ResetRepromptLockout();
 
     g_autosave.last_change_time = ImGui::GetTime();
     g_autosave.last_save_time = ImGui::GetTime();
-    g_last_activity_time = ImGui::GetTime(); // Reset auto-lock timer
+    g_last_activity_time = ImGui::GetTime();
 
-    // Generate recovery key
     {
-        // 32 random bytes
+        // generate recovery key: 32 random bytes → BLAKE2b-derived enc key
         std::vector<uint8_t> recovery_raw(32);
         randombytes_buf(recovery_raw.data(), 32);
 
-        // Derive encryption key from recovery bytes via BLAKE2b
         std::vector<uint8_t> rec_enc_key(32);
         crypto_generichash(rec_enc_key.data(), 32,
                            recovery_raw.data(), 32, nullptr, 0);
 
-        // Encrypt master key (hex-encoded) with recovery encryption key
         std::string mk_hex = enc::bytes_to_hex(v.master_key);
         auto blob = enc::encrypt_credential(mk_hex, rec_enc_key, "vault-recovery");
         enc::secure_zero(mk_hex);
         enc::secure_zero(rec_enc_key);
 
-        // Store encrypted blob
         vault_db::set_recovery_blob(blob, helpers::now_unix_ms());
 
-        // Format recovery key for display: xxxx-xxxx-... (16 groups of 4 hex)
+        // display format: xxxx-xxxx-... (16 groups of 4 hex chars)
         std::string hex = enc::bytes_to_hex(recovery_raw);
         enc::secure_zero(recovery_raw);
         std::string display;
@@ -1787,11 +1929,12 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
         }
         enc::secure_zero(hex);
 
-        // Signal UI to show modal
         g_shell.recovery_key_display = std::move(display);
         g_shell.recovery_key_modal_open = true;
     }
 
+    vault_db::checkpoint_truncate();
+    capture_disk_stamp(v);
     v.set_status("New vault created.", false);
     return true;
 }
@@ -1812,7 +1955,6 @@ static bool save_vault_to_disk(VaultState& v)
         return false;
     }
 
-    // Ensure the database is open
     if (!vault_db::is_open())
     {
         if (!vault_db::init(v.vault_path))
@@ -1822,34 +1964,34 @@ static bool save_vault_to_disk(VaultState& v)
         }
     }
 
-    // Sync in-memory credentials to SQLite
-    // Strategy: Clear and re-import all credentials
-    // This handles adds, updates, and deletes uniformly
+    // bail if the file changed under us (synced from another device) unless user chose Overwrite
+    if (!g_conflict_force_save && disk_stamp_changed(v))
+    {
+        g_vault_conflict = true;
+        v.set_status("Vault changed on disk - resolve before saving.", true);
+        return false;
+    }
 
+    // sync: re-encrypt all in-memory creds (handles adds, updates, deletes uniformly)
     vault_db::begin_transaction();
 
-    // Get all existing non-deleted UUIDs from database
     auto existing_rows = vault_db::get_all_credentials();
     std::unordered_set<std::string> existing_uuids;
     for (const auto& row : existing_rows)
         existing_uuids.insert(row.uuid);
 
-    // Collect soft-deleted UUIDs (for undo recovery detection)
-    auto deleted_rows = vault_db::get_deleted_credentials();
+    auto deleted_rows = vault_db::get_deleted_credentials();  // needed to detect undo-restored entries
     std::unordered_set<std::string> soft_deleted_uuids;
     for (const auto& row : deleted_rows)
         soft_deleted_uuids.insert(row.uuid);
 
-    // Track which UUIDs are still in memory
     std::unordered_set<std::string> memory_uuids;
 
-    // Update or insert each in-memory Credential
     bool save_ok = true;
     for (auto& c : v.creds)
     {
         if (c.uuid.empty())
         {
-            // New Credential - add it
             std::string new_uuid = cred_ops::add(c, v.master_key);
             if (!new_uuid.empty())
             {
@@ -1864,11 +2006,9 @@ static bool save_vault_to_disk(VaultState& v)
         }
         else
         {
-            // If Credential was soft-deleted but restored via undo, restore in DB
             if (soft_deleted_uuids.count(c.uuid))
-                vault_db::restore_credential(c.uuid);
+                vault_db::restore_credential(c.uuid);  // undo brought it back
 
-            // Existing Credential - re-encrypt and store (preserve timestamps)
             memory_uuids.insert(c.uuid);
             {
                 auto blob = cred_ops::encrypt_cred_public(c, v.master_key, c.uuid);
@@ -1890,7 +2030,7 @@ static bool save_vault_to_disk(VaultState& v)
         return false;
     }
 
-    // Hard delete only true orphans (not in memory AND not soft-deleted)
+    // hard-delete only true orphans (not in memory and not soft-deleted)
     for (const auto& uuid : existing_uuids)
     {
         if (memory_uuids.find(uuid) == memory_uuids.end())
@@ -1901,10 +2041,83 @@ static bool save_vault_to_disk(VaultState& v)
 
     vault_db::commit_transaction();
 
+    // collapse WAL into .db so the at-rest file is sync-clean and the stamp is accurate
+    vault_db::checkpoint_truncate();
+    capture_disk_stamp(v);
+
     VaultMarkSaved(v);
     v.set_status("Saved.", false);
     ui::ShowToast("Vault saved", ui::ToastType::Success);
     return true;
+}
+
+static void TickConflictCheck()
+{
+    VaultState& v = ActiveVault();
+    if (!v.unlocked || g_vault_conflict) return;
+    if (v.is_dirty()) return;            // save-time guard covers our own pending edits
+    static double s_last = 0.0;
+    const double now = ImGui::GetTime();
+    if (now - s_last < 1.5) return;      // ~1 stat/sec
+    s_last = now;
+    if (disk_stamp_changed(v))
+        g_vault_conflict = true;
+}
+
+static void RenderConflictModal()
+{
+    if (!g_vault_conflict) return;
+    VaultState& v = ActiveVault();
+
+    const char* id = "Vault changed on disk##conflict";
+    if (!ImGui::IsPopupOpen(id))
+        ImGui::OpenPopup(id);
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(id, nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+    {
+        ImGui::TextUnformatted("This vault's file changed on disk - likely synced");
+        ImGui::TextUnformatted("from another device.");
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::TextDisabled("Reload uses the on-disk version. Overwrite keeps this");
+        ImGui::TextDisabled("session's data. Cancel dismisses (next save overwrites).");
+        ImGui::Dummy(ImVec2(0, 10));
+
+        const float bw = 120.0f;
+        if (ui::StyledButton("##conflict_reload", "Reload", ImVec2(bw, 32.0f)))
+        {
+            std::string pw = v.session_password;
+            std::string path = v.vault_path;
+            if (load_vault_from_disk(path, pw, v))
+            {
+                rebuild_groups(g_shell, v.creds);
+                rebuild_tags(g_shell, v.creds);
+                ui::ShowToast("Vault reloaded from disk", ui::ToastType::Success);
+            }
+            g_vault_conflict = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ui::StyledButton("##conflict_overwrite", "Overwrite", ImVec2(bw, 32.0f)))
+        {
+            vault_db::close();           // drop stale handle to the changed file
+            g_conflict_force_save = true;
+            save_vault_to_disk(v);       // re-opens + writes this session's data
+            g_conflict_force_save = false;
+            g_vault_conflict = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ui::StyledButton("##conflict_cancel", "Cancel", ImVec2(bw, 32.0f)))
+        {
+            capture_disk_stamp(v);       // accept current on-disk stamp; stop nagging
+            g_vault_conflict = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 static void TickAutosave()
@@ -1913,14 +2126,14 @@ static void TickAutosave()
     if (!g_shell.autosave_enabled) return;
     if (g_autosave.suspended) return;
     if (!v.unlocked) return;
+    if (g_vault_conflict) return;        // wait for the user to resolve the on-disk conflict
     if (!v.is_dirty()) return;
 
     const double now = ImGui::GetTime();
 
-    // Debounce (~1.2s)
     if (now - g_autosave.last_change_time >= 1.2)
     {
-        // Preserve user status messages if they exist (especially errors)
+        // preserve any error/info status the user should still see
         const bool had_status = !v.status_msg.empty();
         const bool was_error = v.status_is_error;
         const std::string saved_status = v.status_msg;
@@ -1928,7 +2141,6 @@ static void TickAutosave()
         save_vault_to_disk(v);
         g_autosave.last_save_time = now;
 
-        // Restore user status if it was non-empty or an error
         if (had_status && (was_error || !saved_status.empty()))
         {
             v.status_msg = saved_status;
@@ -1937,9 +2149,6 @@ static void TickAutosave()
     }
 }
 
-// ============================================================
-// Auto-lock: lock vault after inactivity
-// ============================================================
 static void TickAutoLock()
 {
     VaultState& v = ActiveVault();
@@ -1951,60 +2160,48 @@ static void TickAutoLock()
     const double now = ImGui::GetTime();
     const ImGuiIO& io = ImGui::GetIO();
 
-    // Detect user activity: mouse movement, mouse clicks, or key presses
     bool has_activity = false;
 
-    // Check mouse movement (with small threshold to avoid jitter)
+    // small threshold to ignore sub-pixel jitter
     ImVec2 mouse_delta = ImVec2(io.MousePos.x - g_last_mouse_pos.x, io.MousePos.y - g_last_mouse_pos.y);
     if (fabsf(mouse_delta.x) > 2.0f || fabsf(mouse_delta.y) > 2.0f)
         has_activity = true;
     g_last_mouse_pos = io.MousePos;
 
-    // Check mouse clicks
     for (int i = 0; i < IM_ARRAYSIZE(io.MouseDown); ++i)
         if (io.MouseDown[i]) has_activity = true;
 
-    // Check keyboard input via input queue
     if (io.InputQueueCharacters.Size > 0)
         has_activity = true;
 
-    // Check any key press
     for (int i = ImGuiKey_NamedKey_BEGIN; i < ImGuiKey_NamedKey_END; ++i)
         if (ImGui::IsKeyDown((ImGuiKey)i)) has_activity = true;
 
-    // Reset timer on activity
     if (has_activity)
     {
         g_last_activity_time = now;
         return;
     }
 
-    // Initialize timer if not set
     if (g_last_activity_time == 0.0)
     {
         g_last_activity_time = now;
         return;
     }
 
-    // Check if timeout exceeded
     if (now - g_last_activity_time >= (double)timeout)
     {
-        // Lock the vault
         g_shell.footer_close_anyway = true;
-        g_last_activity_time = now; // Reset to avoid repeated triggers
+        g_last_activity_time = now;  // reset to prevent repeated triggers
         ui::ShowToast("Vault locked due to inactivity", ui::ToastType::Info);
     }
 }
 
-// ============================================================
-// Credential expiry: auto-trash or flag expired timed credentials
-// ============================================================
 static void TickCredentialExpiry()
 {
     VaultState& v = ActiveVault();
     if (!v.unlocked) return;
 
-    // Throttle: check once per second
     static double s_last_expiry_check = 0.0;
     const double now_sec = ImGui::GetTime();
     if (now_sec - s_last_expiry_check < 1.0) return;
@@ -2018,18 +2215,17 @@ static void TickCredentialExpiry()
         if (c.is_deleted()) continue;                  // already in trash
         if (now_ms < c.expires_at_ms) continue;        // not yet expired
 
-        if (!changed) v.push_undo();                   // one undo snapshot per tick
+        if (!changed) v.push_undo();  // one snapshot per tick covers all expirations
         changed = true;
 
         if (c.expiry_action == 0) {
-            // Auto-trash
             c.deleted_at_ms = now_ms;
             c.updated_at_ms = now_ms;
             char toast[256];
             snprintf(toast, sizeof(toast), "Timed credential trashed: %s", c.title.c_str());
             ui::ShowToast(toast, ui::ToastType::Info);
         } else {
-            // Flag only: negate expires_at_ms to mark as expired
+            // flag only: negate expires_at_ms to mark as expired without trashing
             c.expires_at_ms = -c.expires_at_ms;
             c.updated_at_ms = now_ms;
             char toast[256];
@@ -2065,7 +2261,6 @@ static void do_undo(VaultState& v)
 
     v.apply_snapshot_json(snap);
 
-    // Important: reset per-row UI state for THIS vault after big changes
     ui::ForgetVaultRowState(GetActiveVaultKey());
 
     g_autosave.last_change_time = ImGui::GetTime();
@@ -2079,7 +2274,6 @@ static void render_locked_screen()
 {
     VaultState& v = ActiveVault();
 
-    // ---- 2FA pending screen ----
     if (v.tofa_pending)
     {
         static std::string s_tofa_code;
@@ -2135,7 +2329,6 @@ static void render_locked_screen()
             }
         }
 
-        // Status
         if (!v.status_msg.empty())
         {
             ImGui::Dummy(ImVec2(0, 4));
@@ -2149,7 +2342,6 @@ static void render_locked_screen()
         return;
     }
 
-    // per-tab buffers
     static std::vector<std::string> s_pw;
     static std::vector<std::string> s_cached_vaults;
     static int s_selected_vault_idx = -1;
@@ -2161,21 +2353,14 @@ static void render_locked_screen()
 
     const int ti = ImClamp(g_active_tab, 0, (int)g_tabs.size() - 1);
 
-    // Narrow, centered "picker" column
     render::BeginCenteredColumn("##locked_col", 450.0f);
-
-    // Vertical centering offset (push content down a bit)
     ImGui::Dummy(ImVec2(0, 50));
-
-    // Soft container: lifted surface with subtle shadow
     render::BeginSoftContainer(20.0f, 10.0f);
 
-    // Cache vault list
     if (s_cached_vaults.empty())
-        s_cached_vaults = list_vaults_next_to_exe();
+        s_cached_vaults = build_vault_list();
 
 
-    // Auto-select last opened vault (one-shot on first render)
     {
         static bool s_auto_open_done = false;
         if (!s_auto_open_done)
@@ -2198,9 +2383,25 @@ static void render_locked_screen()
         }
     }
 
-    // ============================================================
-    // HEADER: Title on its own line, then Search + icons row
-    // ============================================================
+    auto create_vault_at = [&](const std::string& path)
+    {
+        if (path.empty()) return;
+        if (s_pw[ti].empty()) { v.set_status("Enter a password to create a new vault.", true); return; }
+        v.vault_path = path;
+        create_new_vault_on_disk(v.vault_path, s_pw[ti], v);
+        if (v.unlocked)
+        {
+            cfg::_path = v.vault_path; cfg::update_db_path();
+            cfg::add_recent_vault(v.vault_path);
+            sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
+            s_pw[ti].clear();
+            rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
+            ui::ForgetVaultRowState(GetActiveVaultKey());
+        }
+        s_cached_vaults = build_vault_list();
+        s_selected_vault_idx = -1;
+    };
+
     ImGui::Dummy(ImVec2(0, 8));
     {
         char headerBuf[128];
@@ -2210,27 +2411,24 @@ static void render_locked_screen()
         ImGui::TextUnformatted(headerBuf);
         ImGui::PopFont();
 
-        // Search + Add + Refresh row
-        const float icon = 34.0f; // match input field height
+        const float icon = 34.0f;  // match input field height
         const float gap = ImGui::GetStyle().ItemSpacing.x;
-        const float reservedRight = (icon * 2.0f) + (gap * 2.0f);
+        const float reservedRight = (icon * 3.0f) + (gap * 3.0f);
 
         float avail = ImGui::GetContentRegionAvail().x;
-        float searchW = ImMax(140.0f, avail - reservedRight);
+        float searchW = ImMax(120.0f, avail - reservedRight);
 
         ImGui::SetNextItemWidth(searchW);
-        ui::InputTextString("Search next to exe", &s_search_filter);
+        ui::InputTextString("Search in this folder", &s_search_filter);
         ImGui::SameLine();
 
-        // Align buttons with the field box (skip floating label area)
         float labelAreaH = ImGui::GetFontSize() * 0.82f + 2.0f;
         float btnY = ImGui::GetCursorPosY() + labelAreaH;
         ImGui::SetCursorPosY(btnY);
 
-        // Refresh list
         if (ui::IconButtonSquare("refresh_list", ICON_MDI_REFRESH, icon, true))
         {
-            s_cached_vaults = list_vaults_next_to_exe();
+            s_cached_vaults = build_vault_list();
             s_selected_vault_idx = -1;
         }
         if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Refresh vault list");
@@ -2238,40 +2436,51 @@ static void render_locked_screen()
         ImGui::SameLine();
         ImGui::SetCursorPosY(btnY);
 
-        // Add vault (create new)
-        if (ui::IconButtonSquare("add_tolist", ICON_MDI_FILE_PLUS, icon, true))
+        if (ui::IconButtonSquare("open_from", ICON_MDI_FOLDER_OPEN, icon, true))
         {
-            if (s_pw[ti].empty())
+            std::string picked = PickOpenFilePath_DB();
+            if (!picked.empty())
             {
-                v.set_status("Enter a password to create a new vault.", true);
-            }
-            else
-            {
-                // Local vault creation
-                v.vault_path = new_db_path();
-                create_new_vault_on_disk(v.vault_path, s_pw[ti], v);
-
-                if (v.unlocked)
-                {
-                    sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
-                    s_pw[ti].clear();
-
-                    rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
-                    ui::ForgetVaultRowState(GetActiveVaultKey());
-                }
-
-                s_cached_vaults = list_vaults_next_to_exe();
+                cfg::add_recent_vault(picked);
+                v.vault_path = picked;
+                s_cached_vaults = build_vault_list();
                 s_selected_vault_idx = -1;
+                for (int i = 0; i < (int)s_cached_vaults.size(); i++)
+                    if (s_cached_vaults[i] == picked) { s_selected_vault_idx = i; break; }
             }
         }
+        if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Open a vault from a folder (e.g. your synced drive)");
+
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(btnY);
+
+        if (ui::IconButtonSquare("add_tolist", ICON_MDI_FILE_PLUS, icon, true))
+            ImGui::OpenPopup("##new_vault_menu");
         if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Create new vault");
+
+        {
+            bool dark = g_shell.dark_theme;
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 8.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
+            ImGui::PushStyleColor(ImGuiCol_PopupBg, dark ? theme::PopupBg.dark : theme::PopupBg.light);
+            ImGui::PushStyleColor(ImGuiCol_Border, dark ? theme::PopupBorder.dark : theme::PopupBorder.light);
+            if (ImGui::BeginPopup("##new_vault_menu"))
+            {
+                if (ImGui::MenuItem("New beside app"))
+                    create_vault_at(new_db_path());
+                if (ImGui::MenuItem("New at location..."))
+                    create_vault_at(PickSaveFilePath_DB());
+                ImGui::EndPopup();
+            }
+            ImGui::PopStyleColor(2);
+            ImGui::PopStyleVar(4);
+        }
     }
 
     ImGui::Dummy(ImVec2(0, 4)); // tighter than 6/8
 
-    // ============================================================
-    // FILTER VAULTS (case-insensitive)
-    // ============================================================
     std::vector<int> filtered_indices;
     filtered_indices.reserve(s_cached_vaults.size());
 
@@ -2286,22 +2495,14 @@ static void render_locked_screen()
         }
     }
 
-    // ============================================================
-    // COMPACT HEIGHT RULES
-    // ============================================================
     const float footerH = 68.0f;     // taller to fit outlined input + label area
     const float statusH = (!v.status_msg.empty()) ? 20.0f : 0.0f;
 
-    // List should NOT expand forever — cap it so screen feels "picker"
     float listAvail = ImGui::GetContentRegionAvail().y - footerH - statusH - 8.0f;
-    float listH = ImClamp(listAvail, 160.0f, 215.0f); // <-- compact cap
+    float listH = ImClamp(listAvail, 160.0f, 215.0f);  // cap so the screen stays "picker"-sized
 
-    // Smaller rows = denser list
     const float rowH = 32.0f;
 
-    // ============================================================
-    // VAULT LIST (compact)
-    // ============================================================
     ImGui::BeginChild("##vault_list", ImVec2(-1, listH));
 
     if (filtered_indices.empty())
@@ -2333,55 +2534,148 @@ static void render_locked_screen()
     }
     else
     {
-        for (int i = 0; i < (int)filtered_indices.size(); i++)
+        std::unordered_set<std::string> recent_set;  // recent entries can be right-click removed
+        for (const auto& p : cfg::get_recent_vaults())
+            recent_set.insert(norm_vault_path(p));
+
+        char exe_path_c[MAX_PATH];
+        GetModuleFileNameA(nullptr, exe_path_c, MAX_PATH);
+        std::filesystem::path exe_dir = std::filesystem::path(exe_path_c).parent_path();
+
+        struct VaultGroup { std::string label; std::vector<int> indices; };
+        std::vector<VaultGroup> groups;
+        auto bucket_for = [&](const std::string& label) -> std::vector<int>* {
+            for (auto& g : groups) if (g.label == label) return &g.indices;
+            groups.push_back({ label, {} });
+            return &groups.back().indices;
+        };
+        for (int idx : filtered_indices)
         {
-            int vaultIdx = filtered_indices[i];
-            const std::string& vaultPath = s_cached_vaults[vaultIdx];
-            std::string filename = helpers::Basename(vaultPath);
+            std::string label = vault_group_label(s_cached_vaults[idx], exe_dir);
+            bucket_for(label)->push_back(idx);
+        }
 
-            bool is_selected = (s_selected_vault_idx == vaultIdx);
+        std::stable_sort(groups.begin(), groups.end(),
+            [](const VaultGroup& a, const VaultGroup& b) {
+                int pa = vault_group_priority(a.label);
+                int pb = vault_group_priority(b.label);
+                if (pa != pb) return pa < pb;
+                return a.label < b.label;
+            });
 
-            std::string label = filename;
-            // If collisions possible:
-            // label += "##"; label += std::to_string(vaultIdx);
+        for (size_t gi = 0; gi < groups.size(); ++gi)
+        {
+            const VaultGroup& g = groups[gi];
 
-            if (ImGui::Selectable2(label.c_str(), is_selected, 0, ImVec2(0, rowH)))
+            if (gi > 0) ImGui::Dummy(ImVec2(0, 4));
+
+            ImGui::PushFont(render::FontSmall);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 4.0f);
+            ImGui::TextUnformatted(g.label.c_str());
+            ImGui::PopStyleColor();
+            ImGui::PopFont();
+
+            ImGui::Indent(12.0f);
+
+            for (int vaultIdx : g.indices)
             {
-                s_selected_vault_idx = vaultIdx;
-                v.vault_path = vaultPath;
-            }
+                const std::string& vaultPath = s_cached_vaults[vaultIdx];
+                std::string filename = helpers::Basename(vaultPath);
 
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
-                ui::SetTooltipPadded("%s", vaultPath.c_str());
+                bool is_selected = (s_selected_vault_idx == vaultIdx);
+                bool exists      = helpers::file_exists(vaultPath);
+                bool is_recent   = recent_set.count(norm_vault_path(vaultPath)) > 0;
 
-            // Double-click unlock (even if not selected yet)
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
-            {
-                s_selected_vault_idx = vaultIdx;
-                v.vault_path = vaultPath;
+                std::string label = filename;
+                if (!exists) label += "   (missing)";
+                // same filename in different groups → same ImGui ID; disambiguate with index
+                label += "##v" + std::to_string(vaultIdx);
 
-                if (!s_pw[ti].empty())
+                if (!exists)
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                // declared in imgui_widgets.cpp; left-aligns label so filenames sit under their group header
+                extern const ImGuiSelectableFlags PDSelectableFlags_LeftAlignText;
+                bool clicked = ImGui::Selectable2(label.c_str(), is_selected,
+                                                  PDSelectableFlags_LeftAlignText,
+                                                  ImVec2(0, rowH));
+                if (!exists)
+                    ImGui::PopStyleColor();
+
+                std::string hint = vault_path_hint(vaultPath, exe_dir, g.label);
+                if (!hint.empty())
                 {
-                    load_vault_from_disk(v.vault_path, s_pw[ti], v);
-                    if (v.unlocked)
+                    ImGui::PushFont(render::FontSmall);
+                    const ImVec2 ts = ImGui::CalcTextSize(hint.c_str());
+                    const ImVec2 rmin = ImGui::GetItemRectMin();
+                    const ImVec2 rmax = ImGui::GetItemRectMax();
+                    const float x = rmax.x - ts.x - 10.0f;
+                    const float y = rmin.y + (rmax.y - rmin.y - ts.y) * 0.5f;
+                    const ImU32 col = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(x, y), col, hint.c_str());
+                    ImGui::PopFont();
+                }
+
+                if (clicked)
+                {
+                    if (exists)
                     {
-                        // Clear password from input buffer
-                        sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
-                        s_pw[ti].clear();
-
-                        // Remember last opened vault
-                        cfg::_path = v.vault_path;
-                        cfg::update_db_path();
-
-                        rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
-                        ui::ForgetVaultRowState(GetActiveVaultKey());
+                        s_selected_vault_idx = vaultIdx;
+                        v.vault_path = vaultPath;
+                    }
+                    else
+                    {
+                        v.set_status("Vault file not found (moved, deleted, or sync offline).", true);
                     }
                 }
-                else
+
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
+                    ui::SetTooltipPadded("%s", vaultPath.c_str());
+
+                // PushStyleVar before BeginPopupContextItem so the popup window picks up the padding
+                ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(8, 4));
+                if (is_recent && ImGui::BeginPopupContextItem())
                 {
-                    v.set_status("Enter password to unlock.", true);
+                    if (ImGui::MenuItem("Remove from list"))
+                    {
+                        cfg::remove_recent_vault(vaultPath);
+                        s_cached_vaults = build_vault_list();
+                        s_selected_vault_idx = -1;
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::PopStyleVar(2);
+
+                if (exists && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
+                {
+                    s_selected_vault_idx = vaultIdx;
+                    v.vault_path = vaultPath;
+
+                    if (!s_pw[ti].empty())
+                    {
+                        load_vault_from_disk(v.vault_path, s_pw[ti], v);
+                        if (v.unlocked)
+                        {
+                            sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
+                            s_pw[ti].clear();
+
+                            cfg::_path = v.vault_path;
+                            cfg::update_db_path();
+                            cfg::add_recent_vault(v.vault_path);
+
+                            rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
+                            ui::ForgetVaultRowState(GetActiveVaultKey());
+                        }
+                    }
+                    else
+                    {
+                        v.set_status("Enter password to unlock.", true);
+                    }
                 }
             }
+
+            ImGui::Unindent(12.0f);
         }
     }
 
@@ -2389,9 +2683,6 @@ static void render_locked_screen()
 
     ImGui::Dummy(ImVec2(0, 6)); // tight spacing between list and footer
 
-    // ============================================================
-    // FOOTER: Password + Unlock (compact + attached)
-    // ============================================================
     {
         bool hasVault = !v.vault_path.empty();
         bool hasPw = !s_pw[ti].empty();
@@ -2402,7 +2693,6 @@ static void render_locked_screen()
         const float icon = 34.0f; // match input field height
         const float gap = ImGui::GetStyle().ItemSpacing.x;
 
-        // Keep input tight inside column (reserve space for eye + unlock icons)
         float avail = ImGui::GetContentRegionAvail().x;
         float pwW = ImMax(140.0f, avail - (icon * 2.0f) - (gap * 2.0f));
 
@@ -2427,7 +2717,6 @@ static void render_locked_screen()
 
         ImGui::SameLine();
 
-        // Align buttons with the field box (skip floating label area)
         float labelAreaH = ImGui::GetFontSize() * 0.82f + 2.0f;
         float btnY = ImGui::GetCursorPosY() + labelAreaH;
         ImGui::SetCursorPosY(btnY);
@@ -2449,13 +2738,12 @@ static void render_locked_screen()
                 load_vault_from_disk(v.vault_path, s_pw[ti], v);
                 if (v.unlocked)
                 {
-                    // Clear password from input buffer (no longer needed)
                     sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
                     s_pw[ti].clear();
 
-                    // Remember last opened vault
                     cfg::_path = v.vault_path;
                     cfg::update_db_path();
+                    cfg::add_recent_vault(v.vault_path);
 
                     rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
                     ui::ForgetVaultRowState(GetActiveVaultKey());
@@ -2473,14 +2761,10 @@ static void render_locked_screen()
             ImGui::SetTooltip("Enter your password.");
     }
 
-    // ============================================================
-    // Recovery key unlock option
-    // ============================================================
     {
         static bool s_show_recovery = false;
         static std::string s_recovery_input;
 
-        // Check if vault has a recovery key
         bool vault_has_recovery = false;
         if (!v.vault_path.empty()) {
             if (vault_db::is_open())
@@ -2536,7 +2820,6 @@ static void render_locked_screen()
                     ImGuiInputTextFlags_EnterReturnsTrue);
 
                 ImGui::SameLine();
-                // Align button with the field box (skip floating label area)
                 float labelAreaH = ImGui::GetFontSize() * 0.82f + 2.0f;
                 ImGui::SetCursorPosY(ImGui::GetCursorPosY() + labelAreaH);
 
@@ -2547,7 +2830,6 @@ static void render_locked_screen()
 
                 if ((enterRec && canRecover) || clickRecover)
                 {
-                    // Parse input: strip dashes/spaces, hex-decode
                     std::string clean;
                     for (char ch : s_recovery_input)
                         if (ch != '-' && ch != ' ') clean += ch;
@@ -2557,17 +2839,14 @@ static void render_locked_screen()
 
                     if (recovery_raw.size() == 32)
                     {
-                        // Open DB if needed
                         if (!vault_db::is_open())
                             vault_db::init(v.vault_path);
 
-                        // Derive encryption key
                         std::vector<uint8_t> rec_enc_key(32);
                         crypto_generichash(rec_enc_key.data(), 32,
                                            recovery_raw.data(), 32, nullptr, 0);
                         enc::secure_zero(recovery_raw);
 
-                        // Decrypt recovery blob
                         auto blob = vault_db::get_recovery_blob();
                         std::string mk_hex = enc::decrypt_credential(blob, rec_enc_key, "vault-recovery");
                         enc::secure_zero(rec_enc_key);
@@ -2577,16 +2856,14 @@ static void render_locked_screen()
                             std::vector<uint8_t> master_key = enc::hex_to_bytes(mk_hex);
                             enc::secure_zero(mk_hex);
 
-                            // Load credentials with recovered master key
                             auto creds = cred_ops::load_all(master_key);
 
                             v.master_key = std::move(master_key);
-                            lock_key(v.master_key);            // pin in physical RAM
-                            v.session_password.clear(); // no password known
+                            lock_key(v.master_key);
+                            v.session_password.clear();  // no password known after recovery
                             v.creds = std::move(creds);
-                            v.tofa_pending = false; // recovery bypasses 2FA
+                            v.tofa_pending = false;  // recovery bypasses 2FA
 
-                            // Auto-purge trash
                             int days = cfg::get_trash_retention_days();
                             if (days > 0) {
                                 int64_t cutoff = helpers::now_unix_ms() - (int64_t)days * time_ms::DAY;
@@ -2627,9 +2904,6 @@ static void render_locked_screen()
         }
     }
 
-    // ============================================================
-    // Status message (tight)
-    // ============================================================
     if (!v.status_msg.empty())
     {
         ImGui::Dummy(ImVec2(0, 4));
@@ -2639,7 +2913,6 @@ static void render_locked_screen()
 
     ImGui::Dummy(ImVec2(0, 8));
 
-    // Close soft container
     render::EndSoftContainer();
 
     render::EndCenteredColumn();
@@ -2651,17 +2924,14 @@ static void render_settings_modal()
     const float SETTINGS_MODAL_HEIGHT = 550.0f;
     const ImVec2 SETTINGS_MODAL_PADDING = ImVec2(20.0f, 20.0f);
 
-    // Center and set size constraints
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(SETTINGS_MODAL_WIDTH, SETTINGS_MODAL_HEIGHT), ImGuiCond_Always);
 
-    // Theme-aware modal colors
     const bool dark = g_shell.dark_theme;
     const ImU32 popupBg = dark ? theme::ModalBg.dark : theme::ModalBg.light;
     const ImU32 dimBg = colors::DimOverlayLight;
 
-    // Styling
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, SETTINGS_MODAL_PADDING);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 6));
@@ -2678,16 +2948,11 @@ static void render_settings_modal()
     ImGui::PopStyleVar(3);
 }
 
-// application.cpp
 static void render_unlocked_screen()
 {
-    // Ensure at least one tab
     ActiveTab();
-
-    // Sync shell top tabs from vault tabs (labels + active index)
     SyncShellTabsFromVaultTabs();
 
-    // --- Center window once ---
     RECT screen_rect;
     GetWindowRect(GetDesktopWindow(), &screen_rect);
 
@@ -2697,18 +2962,11 @@ static void render_unlocked_screen()
     ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Once);
     ImGui::SetNextWindowSize(ImVec2(WINDOW_WIDTH, WINDOW_HEIGHT), ImGuiCond_Always);
 
-    // ============================================================
-    // Begin Shell
-    // ============================================================
     ui::BeginShell(g_shell, "Password Manager");
 
-    // Store previous active tab BEFORE syncing
     const int prev_active_tab = g_active_tab;
-
-    // If user switched top DB tab in the shell, update active tab index
     ApplyShellActiveTab();
 
-    // If we switched DB, reset close confirm state IMMEDIATELY
     if (g_active_tab != prev_active_tab)
     {
         g_shell.footer_close_confirming = false;
@@ -2716,15 +2974,12 @@ static void render_unlocked_screen()
         g_shell.footer_close_cancel = false;
     }
 
-    // Now bind the correct active vault after tab switching
     VaultState& v = ActiveVault();
     const uint32_t activeVaultKey = GetActiveVaultKey();
 
-    // Security center stats (compute on Settings and Unlocked screens)
     if ((g_shell.active_screen == ui::Screen::Settings ||
          g_shell.active_screen == ui::Screen::Unlocked) && v.unlocked)
     {
-        // Reused: password frequency map
         std::unordered_map<std::string, int> pw_freq;
         for (const auto& c : v.creds) {
             if (!c.is_deleted() && c.type == CredType::Password && !c.password.empty())
@@ -2739,7 +2994,6 @@ static void render_unlocked_screen()
             }
         }
 
-        // Weak: score <= 1
         int weak = 0;
         g_shell.sec_weak_ids.clear();
         for (const auto& c : v.creds) {
@@ -2753,7 +3007,6 @@ static void render_unlocked_screen()
         g_shell.sec_reused_count  = reused;
         g_shell.sec_weak_count    = weak;
 
-        // Aging: password not changed in more than N days
         int aging = 0;
         g_shell.sec_aging_ids.clear();
         {
@@ -2774,7 +3027,7 @@ static void render_unlocked_screen()
         }
         g_shell.sec_aging_count = aging;
 
-        // Consume breach check results from background thread (acquire pairs with release in thread)
+        // acquire pairs with the release in the background thread
         if (g_shell.sec_breach_done.load(std::memory_order_acquire)) {
             g_shell.sec_exposed_ids   = std::move(g_shell.sec_exposed_ids_staging);
             g_shell.sec_exposed_count = g_shell.sec_exposed_count_staging;
@@ -2782,8 +3035,7 @@ static void render_unlocked_screen()
             g_shell.sec_breach_done.store(false, std::memory_order_relaxed);
         }
 
-        // Breach check: triggered by user "Check Now" button.
-        // Offline-first: only contacts api.pwnedpasswords.com if the user opted in.
+        // only contacts pwnedpasswords.com if the user opted in
         if (g_shell.sec_breach_trigger && !g_shell.sec_breach_checking) {
             g_shell.sec_breach_trigger = false;
             if (cfg::get_online_breach_check())
@@ -2793,8 +3045,6 @@ static void render_unlocked_screen()
         }
     }
 
-    // Screen transition logic:
-    // - Lock/unlock transitions based on vault state
     if (!v.unlocked &&
         g_shell.active_screen != ui::Screen::Locked)
     {
@@ -2806,9 +3056,6 @@ static void render_unlocked_screen()
         ResetScreen(g_shell, ui::Screen::Unlocked);
     }
 
-    // ============================================================
-    // FIXED HEADER: DrawListControlsRow (not scrollable)
-    // ============================================================
     if (g_shell.active_screen != ui::Screen::Locked &&
         g_shell.active_screen != ui::Screen::Settings)
     {
@@ -2818,18 +3065,10 @@ static void render_unlocked_screen()
         //ImGui::Dummy(ImVec2(0, 4));
     }
 
-    // ============================================================
-    // SCROLLABLE LIST: Add panel + accordion list
-    // (Skip if settings page is open)
-    // ============================================================
-
     const bool render_scroll = (g_shell.active_screen != ui::Screen::Settings);
     if (render_scroll)
         ui::BeginShellScroll();
 
-    // ============================================================
-    // Footer status + dirty
-    // ============================================================
     g_shell.dirty = v.is_dirty();
     g_shell.can_undo = !v.undo_stack.empty();
 
@@ -2841,10 +3080,8 @@ static void render_unlocked_screen()
 
     auto stamp_saved_status = [&]()
         {
-            // Optional: show local time without seconds if you want
-            // simplest: reuse now_iso8601_local() and trim
+            // "YYYY-MM-DDTHH:MM:SS-08:00" → "YYYY-MM-DD HH:MM"
             std::string t = helpers::now_iso8601_local();
-            // "YYYY-MM-DDTHH:MM:SS-08:00" -> "YYYY-MM-DD HH:MM"
             if (t.size() >= 16) {
                 t[10] = ' ';
                 t = t.substr(0, 16);
@@ -2852,9 +3089,6 @@ static void render_unlocked_screen()
             v.set_status("Saved • " + t, false);
         };
 
-    // ============================================================
-    // Ctrl+S saves active vault (BLOCKED in read-only)
-    // ============================================================
     if (!g_shell.read_only && ImGui::IsKeyDown(ImGuiMod_Ctrl) && ImGui::IsKeyPressed(ImGuiKey_S, false))
     {
         save_vault_to_disk(v);
@@ -2862,9 +3096,6 @@ static void render_unlocked_screen()
         stamp_saved_status();
     }
 
-    // ============================================================
-    // Footer backups list for active vault
-    // ============================================================
     static std::string s_last_backup_vault;
 
     auto rebuild_footer_backups = [&]()
@@ -2925,8 +3156,7 @@ static void render_unlocked_screen()
             if (g_shell.footer_backup_paths.empty() || g_shell.footer_backup_meta.empty())
                 return;
 
-            // newest is index 0 (your ListBackupsForVault sorts newest first)
-            const auto& m = g_shell.footer_backup_meta[0];
+            const auto& m = g_shell.footer_backup_meta[0];  // ListBackupsForVault sorts newest first
             if (m.localTime.empty())
                 return;
 
@@ -2943,9 +3173,6 @@ static void render_unlocked_screen()
         g_backups_dirty = false;
     }
 
-    // ============================================================
-    // Apply read-only requested by UI popup
-    // ============================================================
     if (g_shell.footer_set_read_only)
     {
         g_shell.footer_set_read_only = false;
@@ -2956,9 +3183,6 @@ static void render_unlocked_screen()
 
     }
 
-    // ============================================================
-    // Create backup now
-    // ============================================================
     if (g_shell.footer_create_backup_clicked)
     {
         g_shell.footer_create_backup_clicked = false;
@@ -2977,17 +3201,9 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // Security lockout - force vault lock on too many failed re-prompts
-    // ============================================================
     if (ui::IsRepromptLockedOut() && v.unlocked)
-    {
-        g_shell.footer_close_anyway = true; // Trigger vault lock
-    }
+        g_shell.footer_close_anyway = true;
 
-    // ============================================================
-    // Browse for backup file
-    // ============================================================
     if (g_shell.footer_browse_backup_clicked)
     {
         g_shell.footer_browse_backup_clicked = false;
@@ -3004,9 +3220,6 @@ static void render_unlocked_screen()
             g_shell.footer_browse_backup_path = std::string(file);
     }
 
-    // ============================================================
-    // Block restore/save intents in read-only (belt + suspenders)
-    // ============================================================
     if (g_shell.footer_restore_clicked && g_shell.read_only)
     {
         g_shell.footer_restore_clicked = false;
@@ -3019,9 +3232,6 @@ static void render_unlocked_screen()
         v.set_status("Blocked: Read-only mode.", true);
     }
 
-    // ============================================================
-    // If read-only, nuke mutating intents so nothing slips through
-    // ============================================================
     if (g_shell.read_only)
     {
         g_shell.add_clicked = false;
@@ -3034,9 +3244,6 @@ static void render_unlocked_screen()
         g_shell.bulk_set_group_clicked = false;
     }
 
-    // ============================================================
-    // Groups rebuild (per-vault tracking)
-    // ============================================================
     const uint32_t gh = HashGroupsOnly(v.creds);
     if (gh != v.last_groups_hash)
     {
@@ -3044,9 +3251,6 @@ static void render_unlocked_screen()
         v.last_groups_hash = gh;
     }
 
-    // ============================================================
-    // Add / Undo
-    // ============================================================
     if (g_shell.add_clicked && !g_shell.read_only && g_shell.active_screen == ui::Screen::Unlocked)
     {
         g_cred_modal.OpenAdd();
@@ -3065,16 +3269,12 @@ static void render_unlocked_screen()
 
 
 
-    // ============================================================
-    // CSV Export
-    // ============================================================
     if (g_shell.export_csv_clicked)
     {
         g_shell.export_csv_clicked = false;
         std::string path = PickSaveFilePath_CSV();
         if (!path.empty())
         {
-            // Build CSV: quote every field, escape internal quotes by doubling
             auto csv_quote = [](const std::string& s) -> std::string {
                 std::string out = "\"";
                 for (char c : s) {
@@ -3090,7 +3290,7 @@ static void render_unlocked_screen()
                    "CardholderName,CardNumber,CardExpiry,CardCVV,CardBrand,"
                    "CardAddress,CardCity,CardPostalCode,"
                    "FullName,IDType,IDNumber,DateOfBirth,ExpiryDate,Country,Address,Phone,"
-                   "Created,Modified,ExpiresAt\n";
+                   "Created,Modified,ExpiresAt,TOTP\n";
 
             int count = 0;
             for (const auto& c : v.creds) {
@@ -3123,7 +3323,8 @@ static void render_unlocked_screen()
                      + csv_quote(c.phone) + ','
                      + csv_quote(helpers::unix_ms_to_iso8601(c.created_at_ms)) + ','
                      + csv_quote(helpers::unix_ms_to_iso8601(c.updated_at_ms)) + ','
-                     + (c.expires_at_ms > 0 ? csv_quote(helpers::unix_ms_to_iso8601(c.expires_at_ms)) : "") + '\n';
+                     + (c.expires_at_ms > 0 ? csv_quote(helpers::unix_ms_to_iso8601(c.expires_at_ms)) : "") + ','
+                     + csv_quote(c.totp_secret) + '\n';
                 count++;
             }
 
@@ -3136,9 +3337,6 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // PWM Export / Import
-    // ============================================================
     {
         static bool    s_pwm_export_modal = false;
         static char    s_pwm_export_pw1[256] = {};
@@ -3150,7 +3348,6 @@ static void render_unlocked_screen()
         static std::string s_pwm_import_path;
         static std::string s_pwm_import_error;
 
-        // --- Export intent ---
         if (g_shell.export_pwm_clicked)
         {
             g_shell.export_pwm_clicked = false;
@@ -3161,7 +3358,6 @@ static void render_unlocked_screen()
             ImGui::OpenPopup("Export PWM###pwm_export_modal");
         }
 
-        // --- Export modal ---
         if (s_pwm_export_modal)
         {
             ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -3202,7 +3398,6 @@ static void render_unlocked_screen()
                 ImGui::SetNextItemWidth(fieldW);
                 ImGui::InputText("##pwm_export_pw2", s_pwm_export_pw2, sizeof(s_pwm_export_pw2), ImGuiInputTextFlags_Password);
 
-                // Error message
                 if (!s_pwm_export_error.empty()) {
                     ImGui::Dummy(ImVec2(0, 8));
                     ImGui::PushStyleColor(ImGuiCol_Text, colors::StatusWeak);
@@ -3212,7 +3407,6 @@ static void render_unlocked_screen()
 
                 ImGui::Dummy(ImVec2(0, 12));
 
-                // Buttons
                 const float btnW = 100.0f;
                 const float btnH = 32.0f;
                 float totalBtnW = btnW * 2 + 8.0f;
@@ -3277,7 +3471,6 @@ static void render_unlocked_screen()
             ImGui::PopStyleColor(2);
         }
 
-        // --- Import intent ---
         if (g_shell.import_pwm_clicked)
         {
             g_shell.import_pwm_clicked = false;
@@ -3291,7 +3484,6 @@ static void render_unlocked_screen()
             }
         }
 
-        // --- Import modal ---
         if (s_pwm_import_modal)
         {
             ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -3326,7 +3518,6 @@ static void render_unlocked_screen()
                 ImGui::SetNextItemWidth(fieldW);
                 ImGui::InputText("##pwm_import_pw", s_pwm_import_pw, sizeof(s_pwm_import_pw), ImGuiInputTextFlags_Password);
 
-                // Error message
                 if (!s_pwm_import_error.empty()) {
                     ImGui::Dummy(ImVec2(0, 8));
                     ImGui::PushStyleColor(ImGuiCol_Text, colors::StatusWeak);
@@ -3336,7 +3527,6 @@ static void render_unlocked_screen()
 
                 ImGui::Dummy(ImVec2(0, 12));
 
-                // Buttons
                 const float btnW = 100.0f;
                 const float btnH = 32.0f;
                 float totalBtnW = btnW * 2 + 8.0f;
@@ -3366,20 +3556,32 @@ static void render_unlocked_screen()
 
                     if (result.ok)
                     {
-                        // Clear UUIDs so import_credentials generates fresh ones
-                        for (auto& c : result.creds)
-                            c.uuid.clear();
-
-                        if (cred_ops::import_credentials(result.creds, v.master_key))
+                        // UUIDs preserved: same-UUID+newer overwrites, same-UUID+older skips,
+                        // new UUID inserts — re-importing your own export is a no-op
+                        int inserted = 0, updated = 0, skipped = 0;
+                        std::string import_err;
+                        if (cred_ops::import_credentials(result.creds, v.master_key,
+                                                         &inserted, &updated, &skipped, &import_err))
                         {
                             v.creds = cred_ops::load_all(v.master_key);
                             rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
                             ui::ForgetVaultRowState(GetActiveVaultKey());
                             VaultMarkChanged(v, "IMPORT");
 
-                            char msg[128];
-                            snprintf(msg, sizeof(msg), "Imported %d credentials", result.count);
-                            ui::ShowToast(msg, ui::ToastType::Success);
+                            std::string msg = "Imported ";
+                            bool any = false;
+                            auto append_bucket = [&](int n, const char* label) {
+                                if (n <= 0) return;
+                                if (any) msg += ", ";
+                                msg += std::to_string(n) + " " + label;
+                                any = true;
+                            };
+                            append_bucket(inserted, "new");
+                            append_bucket(updated,  "updated");
+                            append_bucket(skipped,  "already current");
+                            if (!any) msg += "0 credentials";
+
+                            ui::ShowToast(msg.c_str(), ui::ToastType::Success);
 
                             s_pwm_import_error.clear();
                             s_pwm_import_path.clear();
@@ -3388,7 +3590,9 @@ static void render_unlocked_screen()
                         }
                         else
                         {
-                            s_pwm_import_error = "Database error during import";
+                            s_pwm_import_error = import_err.empty()
+                                ? std::string("Database error during import")
+                                : ("Database error during import: " + import_err);
                         }
                     }
                     else
@@ -3413,16 +3617,12 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // KDBX Export
-    // ============================================================
     {
         static bool    s_kdbx_export_modal = false;
         static char    s_kdbx_export_pw1[256] = {};
         static char    s_kdbx_export_pw2[256] = {};
         static std::string s_kdbx_export_error;
 
-        // --- Export intent ---
         if (g_shell.export_kdbx_clicked)
         {
             g_shell.export_kdbx_clicked = false;
@@ -3433,7 +3633,6 @@ static void render_unlocked_screen()
             ImGui::OpenPopup("Export KDBX###kdbx_export_modal");
         }
 
-        // --- Export modal ---
         if (s_kdbx_export_modal)
         {
             ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -3474,7 +3673,6 @@ static void render_unlocked_screen()
                 ImGui::SetNextItemWidth(fieldW);
                 ImGui::InputText("##kdbx_export_pw2", s_kdbx_export_pw2, sizeof(s_kdbx_export_pw2), ImGuiInputTextFlags_Password);
 
-                // Error message
                 if (!s_kdbx_export_error.empty()) {
                     ImGui::Dummy(ImVec2(0, 8));
                     ImGui::PushStyleColor(ImGuiCol_Text, colors::StatusWeak);
@@ -3484,7 +3682,6 @@ static void render_unlocked_screen()
 
                 ImGui::Dummy(ImVec2(0, 12));
 
-                // Buttons
                 const float btnW = 100.0f;
                 const float btnH = 32.0f;
                 float totalBtnW = btnW * 2 + 8.0f;
@@ -3550,15 +3747,11 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // CSV Import
-    // ============================================================
     {
         static bool        s_csv_import_modal = false;
         static CsvImportResult s_csv_result;
         static std::string s_csv_import_error;
 
-        // --- Import intent ---
         if (g_shell.import_csv_clicked)
         {
             g_shell.import_csv_clicked = false;
@@ -3582,7 +3775,6 @@ static void render_unlocked_screen()
             }
         }
 
-        // --- Import modal ---
         if (s_csv_import_modal)
         {
             ImVec2 center = ImGui::GetMainViewport()->GetCenter();
@@ -3634,11 +3826,19 @@ static void render_unlocked_screen()
                             s_csv_result.skipped,
                             s_csv_result.skipped == 1 ? "" : "s");
                     }
+                    if (s_csv_result.short_rows > 0)
+                    {
+                        ImGui::Dummy(ImVec2(0, 4));
+                        ImGui::PushStyleColor(ImGuiCol_Text, colors::StatusReused);  // amber/gold
+                        ImGui::TextWrapped(ICON_MDI_ALERT "  %d row%s had fewer columns than the header — missing fields will import as blank.",
+                            s_csv_result.short_rows,
+                            s_csv_result.short_rows == 1 ? "" : "s");
+                        ImGui::PopStyleColor();
+                    }
                 }
 
                 ImGui::Dummy(ImVec2(0, 12));
 
-                // Buttons
                 const float btnW = 100.0f;
                 const float btnH = 32.0f;
                 float totalBtnW = btnW * 2 + 8.0f;
@@ -3647,7 +3847,6 @@ static void render_unlocked_screen()
 
                 if (ImGui::Button("Cancel", ImVec2(btnW, btnH)) || escape_pressed)
                 {
-                    // Clear parsed Credential passwords
                     for (auto& c : s_csv_result.creds)
                         sodium_memzero(c.password.data(), c.password.size());
                     s_csv_result = {};
@@ -3664,8 +3863,7 @@ static void render_unlocked_screen()
 
                 if (do_import && has_creds && !has_error)
                 {
-                    // Clear UUIDs so import_credentials generates fresh ones
-                    for (auto& c : s_csv_result.creds)
+                    for (auto& c : s_csv_result.creds)  // clear UUIDs so fresh ones are generated
                         c.uuid.clear();
 
                     if (cred_ops::import_credentials(s_csv_result.creds, v.master_key))
@@ -3680,7 +3878,6 @@ static void render_unlocked_screen()
                             (int)s_csv_result.creds.size(), CsvFormatName(s_csv_result.format));
                         ui::ShowToast(msg, ui::ToastType::Success);
 
-                        // Clear passwords
                         for (auto& c : s_csv_result.creds)
                             sodium_memzero(c.password.data(), c.password.size());
 
@@ -3712,28 +3909,15 @@ static void render_unlocked_screen()
         }
     }
 
-    // Render Credential modal (Add/Edit)
     render_credential_modal(v);
-
-    // Render re-prompt modal (security)
+    RenderConflictModal();
     ui::RenderRepromptModal();
-
-    // Render trash bin modal
     ui::RenderTrashModal(g_shell);
-
-    // Render security center modal
     ui::RenderSecurityCenterModal(g_shell);
-
-    // Render recovery key modal (shown once at vault creation)
     ui::RenderRecoveryKeyModal(g_shell);
-
-    // Render settings modal
     ui::RenderSettingsPage(g_shell);
-
-    // Render on-screen keyboard
     ui::RenderOnScreenKeyboard();
 
-    // If locked, render locked and bail
     if (g_shell.active_screen == ui::Screen::Locked)
     {
         render_locked_screen();
@@ -3752,9 +3936,6 @@ static void render_unlocked_screen()
     {
         if (v.creds.empty())
         {
-            // ============================================================
-            // Empty vault onboarding message
-            // ============================================================
             ImVec2 avail   = ImGui::GetContentRegionAvail();
             float  startY  = ImGui::GetCursorPosY();
 
@@ -3762,7 +3943,6 @@ static void render_unlocked_screen()
             const char* primary   = "Your vault is empty";
             const char* secondary = "Click  " ICON_MDI_ACCOUNT_PLUS "  in the top right to add your first credential";
 
-            // Measure each line with its font
             ImGui::PushFont(render::FontLarge);
             ImVec2 iconSz = ImGui::CalcTextSize(icon);
             ImGui::PopFont();
@@ -3777,22 +3957,19 @@ static void render_unlocked_screen()
 
             float spacing = 6.0f;
             float totalH  = iconSz.y + spacing + primarySz.y + spacing + secondarySz.y;
-            float yOff    = startY + (avail.y - totalH) * 0.4f; // slightly above center
+            float yOff    = startY + (avail.y - totalH) * 0.4f;  // slightly above center
 
-            // Icon
             ImGui::SetCursorPos(ImVec2((avail.x - iconSz.x) * 0.5f, yOff));
             ImGui::PushFont(render::FontLarge);
             ImGui::TextDisabled("%s", icon);
             ImGui::PopFont();
 
-            // Primary text
             yOff += iconSz.y + spacing;
             ImGui::SetCursorPos(ImVec2((avail.x - primarySz.x) * 0.5f, yOff));
             ImGui::PushFont(render::FontRegular);
             ImGui::TextDisabled("%s", primary);
             ImGui::PopFont();
 
-            // Secondary text
             yOff += primarySz.y + spacing;
             ImGui::SetCursorPos(ImVec2((avail.x - secondarySz.x) * 0.5f, yOff));
             ImGui::PushFont(render::FontSmall);
@@ -3801,9 +3978,6 @@ static void render_unlocked_screen()
         }
         else
         {
-            // ============================================================
-            // Build list items
-            // ============================================================
             const char* search = ui::GetSearchText();
             const int searchFilter = ui::GetSearchFilter();
 
@@ -3823,7 +3997,7 @@ static void render_unlocked_screen()
                     g_shell.group_mode
                 );
 
-            // Populate sidebar badge counts from UNFILTERED credentials
+            // sidebar badge counts from unfiltered credentials
             {
                 int ca = 0, cp = 0, cf = 0, cPw = 0, cCd = 0, cId = 0, cNt = 0;
                 std::unordered_map<std::string, int> gc;
@@ -3880,13 +4054,8 @@ static void render_unlocked_screen()
     }
 
 
-    // ============================================================
-    // HARD READ-ONLY GATE for commits coming back from UI
-    // (this is the part you were missing)
-    // ============================================================
     if (g_shell.read_only && render_list)
     {
-        // If UI tried to commit anything, ignore it and notify.
         if (r.delete_id != -1 || r.edit_commit_id != -1 || r.edit_open_id != -1 ||
             r.toggle_pin_id != -1 || r.toggle_fav_id != -1)
         {
@@ -3899,18 +4068,12 @@ static void render_unlocked_screen()
         }
     }
 
-    // ============================================================
-    // Security Center: feed selected Credential into edit pipeline
-    // ============================================================
     if (g_shell.sec_center_edit_id != -1)
     {
         r.edit_open_id = g_shell.sec_center_edit_id;
         g_shell.sec_center_edit_id = -1;
     }
 
-    // ============================================================
-    // Handle edit request -> open modal
-    // ============================================================
     if (render_list && r.edit_open_id != -1)
     {
         for (const auto& c : v.creds)
@@ -3925,9 +4088,6 @@ static void render_unlocked_screen()
     }
 
 
-    // ============================================================
-    // BULK INTENTS
-    // ============================================================
     auto ApplyBulkToSelected = [&](auto&& fn)
         {
             std::vector<uint64_t> keys;
@@ -4048,12 +4208,10 @@ static void render_unlocked_screen()
         g_shell.bulk_set_group_clicked = false;
     }
 
-    // Bulk tag add
     if (!g_shell.bulk_tag_to_add.empty() && render_list)
     {
         const std::string tag = g_shell.bulk_tag_to_add;
         if (ApplyBulkToSelected([&](Credential& c) {
-            // Add tag if not already present
             bool exists = false;
             for (const auto& t : c.tags)
                 if (t == tag) { exists = true; break; }
@@ -4064,7 +4222,6 @@ static void render_unlocked_screen()
         g_shell.bulk_tag_to_add.clear();
     }
 
-    // Bulk tag remove
     if (!g_shell.bulk_tag_to_remove.empty() && render_list)
     {
         const std::string tag = g_shell.bulk_tag_to_remove;
@@ -4075,7 +4232,6 @@ static void render_unlocked_screen()
         g_shell.bulk_tag_to_remove.clear();
     }
 
-    // Drag-drop: credential → group
     if (g_shell.drag_drop_cred_id >= 0 && !g_shell.drag_drop_target_group.empty())
     {
         v.push_undo();
@@ -4096,15 +4252,11 @@ static void render_unlocked_screen()
         g_shell.drag_drop_target_group.clear();
     }
 
-    // ============================================================
-    // Per-row delete/edit commits (now safe due to read-only gate)
-    // ============================================================
     if (render_list && r.delete_id != -1)
     {
         CreatePreOpBackup(v, "DELETE");
         v.push_undo();
 
-        // Soft-delete in DB before removing from memory
         for (const auto& c : v.creds) {
             if (c.id == r.delete_id && !c.uuid.empty()) {
                 cred_ops::remove(c.uuid);
@@ -4112,7 +4264,6 @@ static void render_unlocked_screen()
             }
         }
 
-        // Remove Credential from UI
         v.creds.erase(
             std::remove_if(v.creds.begin(), v.creds.end(),
                 [&](const Credential& c) { return c.id == r.delete_id; }),
@@ -4165,7 +4316,6 @@ static void render_unlocked_screen()
     {
         v.push_undo();
 
-        // Update Credential by ID
         for (auto& c : v.creds)
         {
             if (c.id == r.edit_commit_id)
@@ -4182,7 +4332,6 @@ static void render_unlocked_screen()
                 c.expires_at_ms = r.edited.expires_at_ms;
                 c.expiry_action = r.edited.expiry_action;
                 c.password = r.edited_password;
-                // Type-specific fields
                 c.card_number     = r.edited.card_number;
                 c.card_expiry     = r.edited.card_expiry;
                 c.card_cvv        = r.edited.card_cvv;
@@ -4212,9 +4361,7 @@ static void render_unlocked_screen()
     }
 
 
-    // ============================================================
-    // Autosave tick + Auto-lock tick + end shell
-    // ============================================================
+    TickConflictCheck();
     TickAutosave();
     TickAutoLock();
     TickCredentialExpiry();
@@ -4223,42 +4370,29 @@ static void render_unlocked_screen()
         ui::EndShellScroll();
     ui::EndShell();
 
-    // Style editor (floating window)
     ui::RenderAppStyleEditor(g_shell);
 
-    // ============================================================
-    // Back navigation
-    // ============================================================
     if (g_shell.back_clicked)
     {
         g_shell.back_clicked = false;
         PopScreen(g_shell);
     }
 
-    // ============================================================
-    // Handle footer Open/New intents
-     // ============================================================
     if (g_shell.footer_open_db_clicked) HandleOpenDB();
     if (g_shell.footer_new_db_clicked)  HandleNewDB();
 
     if (g_shell.open_db_clicked) HandleOpenDB();
     if (g_shell.new_db_clicked)  HandleNewDB();
 
-    // ============================================================
-    // Footer Save (guarded)
-    // ============================================================
     if (g_shell.footer_save_clicked && !g_shell.read_only)
     {
         save_vault_to_disk(ActiveVault());
         g_autosave.last_save_time = ImGui::GetTime();
         stamp_saved_status();
     }
-    g_shell.footer_save_clicked = false; // consume
+    g_shell.footer_save_clicked = false;
 
 
-    // ============================================================
-    // Always on Top toggle
-    // ============================================================
     if (g_shell.always_on_top_changed)
     {
         g_shell.always_on_top_changed = false;
@@ -4268,17 +4402,10 @@ static void render_unlocked_screen()
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
-    // ============================================================
-    // System tray events
-    // ============================================================
-    // Sync minimize_to_tray flag for WndProc
     render::SetMinimizeToTray(g_shell.minimize_to_tray);
 
     if (render::ConsumeTrayLock())
-    {
-        // Trigger vault lock (same path as close-anyway)
         g_shell.footer_close_anyway = true;
-    }
 
     if (render::ConsumeTrayQuit())
     {
@@ -4286,35 +4413,23 @@ static void render_unlocked_screen()
         ::PostQuitMessage(0);
     }
 
-    // ============================================================
-    // Go to locked screen (from settings "Create New Vault")
-    // ============================================================
     if (g_shell.goto_locked_clicked)
     {
         g_shell.goto_locked_clicked = false;
 
         VaultState& vv = ActiveVault();
 
-        // Close current database
         vault_db::close();
-
-        // Clear sensitive data (zero before free)
         vv.clear_sensitive();
         secure_clear_credentials(vv.creds);
         secure_clear_undo_stack(vv.undo_stack);
         vv.vault_path.clear();
 
-        // Clear re-prompt security state
         ui::SetRepromptMasterPassword("");
         ui::ResetRepromptLockout();
-
-        // Reset to locked screen
         ResetScreen(g_shell, ui::Screen::Locked);
     }
 
-    // ============================================================
-    // Close clicked / confirm flow
-    // ============================================================
     if (g_shell.footer_close_clicked)
     {
         if (ActiveVault().is_dirty())
@@ -4355,9 +4470,6 @@ static void render_unlocked_screen()
         g_shell.active_db = g_active_tab;
     }
 
-    // ============================================================
-    // Restore selected backup
-    // ============================================================
     if (g_shell.footer_restore_clicked)
     {
         g_shell.footer_restore_clicked = false;

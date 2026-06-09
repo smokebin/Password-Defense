@@ -4,9 +4,6 @@
 
 namespace ui
 {
-    // ============================================================
-    // EditBuffers member functions (struct defined in ui_internal.h)
-    // ============================================================
     void EditBuffers::BeginFrom(const AccordionItem& c, const std::string& password_value)
     {
         active = true;
@@ -57,9 +54,6 @@ namespace ui
         show_password = false;
     }
 
-    // ============================================================
-    // View state variable definitions (extern in ui_internal.h)
-    // ============================================================
     std::unordered_map<uint64_t, EditBuffers> g_edit;
     std::unordered_set<uint64_t> g_open;
     std::unordered_map<uint64_t, int> g_scroll_to_open;
@@ -226,11 +220,7 @@ namespace ui
         snprintf(buf, sizeof(buf), "%s %d, %d", months[m - 1], d, y);
         return std::string(buf);
     }
-    // ============================================================
-    // INFO ROW HELPERS (for accordion card body)
-    // ============================================================
-
-    // Clean URL for display (remove protocol and www)
+    // strip protocol + www for display
     std::string CleanUrl(const std::string& url)
     {
         std::string clean = url;
@@ -240,9 +230,6 @@ namespace ui
         return clean;
     }
 
-    // ============================================================
-    // PRIVACY MODE — mask sensitive fields with bullets
-    // ============================================================
     const char* MaskIfPrivate(const std::string& text)
     {
         if (!g_shell_ptr || !g_shell_ptr->privacy_mode || text.empty())
@@ -250,9 +237,6 @@ namespace ui
         return "\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2\xe2\x80\xa2";
     }
 
-    // ============================================================
-    // FIELD CHANGE HIGHLIGHT (dim background on changed fields)
-    // ============================================================
     bool g_field_accent_active = false;
     static const ImU32 kFieldHighlight = colors::FieldHighlight; // subtle orange wash
 
@@ -265,7 +249,6 @@ namespace ui
             kFieldHighlight, 2.0f);
     }
 
-    // ---- Copy-flash icon effect ----
     static std::unordered_map<ImGuiID, double> g_copy_flash_time;
     static constexpr double kCopyFlashDuration = 0.55; // seconds
 
@@ -275,7 +258,7 @@ namespace ui
         g_copy_flash_time[id] = ImGui::GetTime();
     }
 
-    // Draw icon with optional copy-flash: green icon with darker outline
+    // green flash on copy, fades back to TextDisabled
     void DrawRowIcon(const char* icon)
     {
         ImGuiID id = ImGui::GetID("##copy_flash");
@@ -293,7 +276,6 @@ namespace ui
 
         if (flash > 0.01f)
         {
-            // Lerp from bright green back to TextDisabled
             ImVec4 green(0.39f, 0.90f, 0.47f, 1.0f);
             ImVec4 dim = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
             ImVec4 col = ImLerp(dim, green, flash);
@@ -307,7 +289,6 @@ namespace ui
         }
     }
 
-    // Info row: [Icon] text (no button, for group etc.)
     void DrawInfoRow(
         const char* id,
         const char* icon,
@@ -331,7 +312,6 @@ namespace ui
         ImGui::PopID();
     }
 
-    // Floating icon button — no background, no bevel, just icon
     bool IconFloatingBtn(const char* id, const char* icon, const char* tip, float sz)
     {
         ImGui::PushID(id);
@@ -359,7 +339,6 @@ namespace ui
         return pressed;
     }
 
-    // Website row: [Globe] website.com [Launch] (launch on hover)
     void DrawWebsiteRow(
         const char* id,
         const std::string& website,
@@ -383,10 +362,9 @@ namespace ui
         bool anyModal = ImGui::IsPopupOpen((const char*)NULL, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || (g_shell_ptr && g_shell_ptr->settings_modal_open);
         bool rowHovered = !anyModal && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows) && (mp.x >= rowMin.x && mp.x <= rowMax.x && mp.y >= rowMin.y && mp.y <= rowMax.y);
 
-        // Hover font scale
         if (rowHovered) ImGui::SetWindowFontScale(1.05f);
 
-        // Click to launch (only in the text area, not the button zone)
+        // click in text area (not button zone) also launches
         float btnZoneX = startPos.x + rowWidth - btnSz - 8.0f;
         if (rowHovered && !website.empty() && mp.x < btnZoneX && ImGui::IsMouseClicked(0))
         {
@@ -401,7 +379,6 @@ namespace ui
 
         if (rowHovered) ImGui::SetWindowFontScale(1.0f);
 
-        // Floating icon button (absolute positioned, no chrome)
         if (rowHovered && !website.empty())
         {
             ImVec2 btnPos(startPos.x + rowWidth - btnSz - 8.0f, rowY);
@@ -417,7 +394,6 @@ namespace ui
         ImGui::PopID();
     }
 
-    // Copy row: [Icon] value [Copy] (copy on hover)
     void DrawCopyRow(
         const char* id,
         const char* icon,
@@ -443,10 +419,9 @@ namespace ui
         bool anyModal = ImGui::IsPopupOpen((const char*)NULL, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || (g_shell_ptr && g_shell_ptr->settings_modal_open);
         bool rowHovered = !anyModal && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows) && (mp.x >= rowMin.x && mp.x <= rowMax.x && mp.y >= rowMin.y && mp.y <= rowMax.y);
 
-        // Hover font scale
         if (rowHovered) ImGui::SetWindowFontScale(1.05f);
 
-        // Click to copy (only in the text area, not the button zone)
+        // click in text area (not button zone) also copies
         float btnZoneX = startPos.x + rowWidth - btnSz - 8.0f;
         if (rowHovered && !value.empty() && mp.x < btnZoneX && ImGui::IsMouseClicked(0))
         {
@@ -465,7 +440,6 @@ namespace ui
 
         if (rowHovered) ImGui::SetWindowFontScale(1.0f);
 
-        // Floating icon button (absolute positioned, no chrome)
         if (rowHovered && !value.empty())
         {
             ImVec2 btnPos(startPos.x + rowWidth - btnSz - 8.0f, rowY);
@@ -484,14 +458,12 @@ namespace ui
         ImGui::PopID();
     }
 
-    // Map email domain to webmail URL (returns empty if unknown)
     std::string GetWebmailUrl(const std::string& email)
     {
         size_t at = email.rfind('@');
         if (at == std::string::npos || at + 1 >= email.size()) return "";
 
         std::string domain = email.substr(at + 1);
-        // Lowercase for comparison
         for (auto& ch : domain) ch = (char)tolower((unsigned char)ch);
 
         if (domain == "gmail.com" || domain == "googlemail.com")
@@ -519,11 +491,9 @@ namespace ui
         if (domain == "fastmail.com")
             return "https://app.fastmail.com";
 
-        // Fallback: try https://mail.<domain>
-        return "https://mail." + domain;
+        return "https://mail." + domain; // best-effort fallback
     }
 
-    // Email row: [Email icon] email [Open Inbox | Copy] (on hover)
     void DrawEmailRow(
         const char* id,
         const std::string& value,
@@ -548,10 +518,8 @@ namespace ui
         bool anyModal = ImGui::IsPopupOpen((const char*)NULL, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || (g_shell_ptr && g_shell_ptr->settings_modal_open);
         bool rowHovered = !anyModal && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_ChildWindows) && (mp.x >= rowMin.x && mp.x <= rowMax.x && mp.y >= rowMin.y && mp.y <= rowMax.y);
 
-        // Hover font scale
         if (rowHovered) ImGui::SetWindowFontScale(1.05f);
 
-        // Click to copy (only in the text area, not the button zone)
         float btnZoneX = startPos.x + rowWidth - (btnSz + 4.0f) * 2 - 8.0f;
         if (rowHovered && !value.empty() && mp.x < btnZoneX && ImGui::IsMouseClicked(0))
         {
@@ -570,13 +538,12 @@ namespace ui
 
         if (rowHovered) ImGui::SetWindowFontScale(1.0f);
 
-        // Floating buttons on hover: [Open Inbox] [Copy]
+        // [Open Inbox] [Copy] on hover
         if (rowHovered && !value.empty())
         {
             std::string webmail = GetWebmailUrl(value);
             float rightX = startPos.x + rowWidth - 8.0f;
 
-            // Copy button (rightmost)
             ImGui::SetCursorScreenPos(ImVec2(rightX - btnSz, rowY));
             if (IconFloatingBtn("copy", ICON_MDI_CONTENT_COPY, "Copy", btnSz))
             {
@@ -585,7 +552,6 @@ namespace ui
                 ShowToast("Copied", ToastType::Success);
             }
 
-            // Open inbox button (left of copy)
             if (!webmail.empty())
             {
                 ImGui::SetCursorScreenPos(ImVec2(rightX - btnSz * 2 - 4.0f, rowY));
@@ -602,7 +568,6 @@ namespace ui
         ImGui::PopID();
     }
 
-    // Masked copy row: shows masked value, reveals on hover
     void DrawMaskedCopyRow(
         const char* id,
         const char* icon,
@@ -641,25 +606,23 @@ namespace ui
         DrawRowIcon(icon);
         ImGui::SameLine(iconColW);
 
-        // Build masked display
         std::string display;
         if (value.empty()) {
-            display = "\xe2\x80\x94"; // em dash
+            display = "\xe2\x80\x94";
         } else if (rowHovered) {
-            display = value; // reveal on hover
+            display = value;
         } else {
             int len = (int)value.size();
             int show = (reveal_last > 0 && reveal_last < len) ? reveal_last : 0;
             int hide = len - show;
             display.clear();
-            for (int i = 0; i < hide; i++) display += "\xe2\x80\xa2"; // bullet
+            for (int i = 0; i < hide; i++) display += "\xe2\x80\xa2";
             if (show > 0) display += value.substr(len - show);
         }
         TextEllipsisClipped(display.c_str(), valueColW);
 
         if (rowHovered) ImGui::SetWindowFontScale(1.0f);
 
-        // Floating icon button (absolute positioned, no chrome)
         if (rowHovered && !value.empty())
         {
             ImVec2 btnPos(startPos.x + rowWidth - btnSz - 8.0f, rowY);
@@ -683,7 +646,6 @@ namespace ui
         dl->AddText(ImVec2(bMin.x + 6.0f, bMin.y + 1.0f), textCol, text);
     }
 
-    // Draw security warning badges (weak/reused), returns updated rightX
     float DrawSecurityBadges(ImDrawList* dl, const ShellState* shell,
         int credId, float rightX, float centerY, float chipGap)
     {
@@ -711,7 +673,6 @@ namespace ui
         return rightX;
     }
 
-    // Hint line for security context (icon + muted text)
     void DrawHintLine(const char* icon, const char* text, ImU32 iconCol)
     {
         ImGui::PushStyleColor(ImGuiCol_Text, iconCol);
@@ -721,7 +682,6 @@ namespace ui
         ImGui::TextDisabled("%s", text);
     }
 
-    // ---- Popup tab bar (underline style) ----
     void DrawPopupTabBar(int credId, bool hasSecurityTab, int& currentTab)
     {
         const char* labels[] = { "Details", "Notes", "Security" };
@@ -733,7 +693,6 @@ namespace ui
         const float lineThick = 2.0f;
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        // Measure each tab to text width
         float tabW[3] = {};
         float totalW = 0.0f;
         for (int i = 0; i < numTabs; i++) {
@@ -745,7 +704,6 @@ namespace ui
         ImVec2 origin = ImGui::GetCursorScreenPos();
         float curX = origin.x;
 
-        // Bottom border line
         ImU32 borderCol = dk ? IM_COL32(255, 255, 255, 20) : IM_COL32(0, 0, 0, 15);
         dl->AddLine(ImVec2(origin.x, origin.y + tabH), ImVec2(origin.x + totalW, origin.y + tabH), borderCol, 1.0f);
 
@@ -798,7 +756,6 @@ namespace ui
         const float rounding = 6.0f;
         const bool dark = IsDarkTheme();
 
-        // SoftBevel face
         ImU32 faceBg;
         if (held)
             faceBg = theme::ToggleHeld;
@@ -810,15 +767,14 @@ namespace ui
         ImU32 shadowCol = theme::ToggleShadow;
         ImU32 hlCol = hovered ? theme::ToggleGlintHov : theme::ToggleGlintNorm;
 
-        // Splitter: lips behind main body
+        // lips draw behind main body
         ImDrawListSplitter splitter;
         splitter.Split(dl, 2);
         splitter.SetCurrentChannel(dl, 1);
 
-        // Main body
         dl->AddRectFilled(pmin, pmax, faceBg, rounding);
 
-        // Bottom lip shadow
+        // bottom lip shadow
         {
             const float lipOff = 1.5f;
             float clipTop = pmin.y + (sz * 0.6f);
@@ -829,7 +785,7 @@ namespace ui
             splitter.SetCurrentChannel(dl, 1);
         }
 
-        // Top highlight
+        // top glint
         {
             const float inset = 1.0f;
             float clipBot = pmin.y + (sz * 0.35f);
@@ -842,7 +798,6 @@ namespace ui
 
         splitter.Merge(dl);
 
-        // Icon centered
         ImU32 iconCol;
         if (danger)
             iconCol = IM_COL32(220, 80, 80, 255);
@@ -866,7 +821,6 @@ namespace ui
         return pressed;
     }
 
-    // Icon for Credential type
     const char* CredTypeIcon(CredType t)
     {
         switch (t) {
@@ -877,7 +831,6 @@ namespace ui
         }
     }
 
-    // TOTP row: [Clock] 042 837 (23s) [Copy on hover]
     void DrawTOTPRow(
         const char* id,
         const std::string& totp_secret,
@@ -895,7 +848,6 @@ namespace ui
         std::string code = totp::generate_code_now(bytes);
         int secs = totp::seconds_remaining_now();
 
-        // Format code with space in middle: "042 837"
         std::string display_code;
         if (code.size() == 6)
             display_code = code.substr(0, 3) + " " + code.substr(3);
@@ -921,7 +873,6 @@ namespace ui
 
         if (rowHovered) ImGui::SetWindowFontScale(1.05f);
 
-        // Click to copy code
         float btnZoneX = startPos.x + rowWidth - btnSz - 8.0f;
         if (rowHovered && mp.x < btnZoneX && ImGui::IsMouseClicked(0))
         {
@@ -929,7 +880,6 @@ namespace ui
             ShowToast("TOTP copied", ToastType::Success);
         }
 
-        // Color: green when >5s, red when <=5s
         ImVec4 col = (secs > 5) ? colors::Green : colors::Red;
 
         ImGui::TextDisabled(ICON_MDI_CLOCK);
@@ -940,7 +890,6 @@ namespace ui
 
         if (rowHovered) ImGui::SetWindowFontScale(1.0f);
 
-        // Floating copy icon on hover
         if (rowHovered)
         {
             ImVec2 btnPos(startPos.x + rowWidth - btnSz - 8.0f, rowY);
@@ -957,10 +906,8 @@ namespace ui
         ImGui::PopID();
     }
 
-    // Forward declaration for re-prompt pending Credential ID
     static int s_reprompt_pending_cred_id = -1;
 
-    // Password row: [Key] •••••••• [Eye] [Copy] (buttons on hover)
     void DrawPasswordRow(
         const char* id,
         int credId,
@@ -991,10 +938,8 @@ namespace ui
         const char* pw = get_password_fn ? get_password_fn(credId) : "";
         bool hasPw = pw && pw[0];
 
-        // Hover font scale
         if (rowHovered) ImGui::SetWindowFontScale(1.05f);
 
-        // Click to copy (only in the text area, not the button zone)
         float btnZoneX = startPos.x + rowWidth - btnSz * 2 - 12.0f;
         if (rowHovered && hasPw && mp.x < btnZoneX && ImGui::IsMouseClicked(0))
         {
@@ -1010,7 +955,6 @@ namespace ui
 
         if (rowHovered) ImGui::SetWindowFontScale(1.0f);
 
-        // Check if re-prompt was approved for this Credential
         if (IsRepromptApproved(RepromptAction::RevealPassword) && s_reprompt_pending_cred_id == credId)
         {
             visiblePasswords.insert(credId);
@@ -1018,7 +962,6 @@ namespace ui
             s_reprompt_pending_cred_id = -1;
         }
 
-        // Floating icon buttons (absolute positioned, no chrome)
         if (rowHovered)
         {
             float btnX = startPos.x + rowWidth - btnSz * 2 - 12.0f;
@@ -1052,7 +995,7 @@ namespace ui
             }
         }
 
-        // Right-click: password history popup (InvisibleButton for reliable hit-testing in child windows)
+        // InvisibleButton for right-click — more reliable hit-testing inside child windows
         if (!password_history.empty())
         {
             ImGui::SetCursorScreenPos(rowMin);
@@ -1105,7 +1048,7 @@ namespace ui
     }
 
 
-    static std::unordered_set<uint64_t> g_revealed_fields; // tracks revealed field keys
+    static std::unordered_set<uint64_t> g_revealed_fields;
 
     bool DrawCopyFieldRow(
         const char* id,
@@ -1149,7 +1092,6 @@ namespace ui
 
         ImGui::PushID(id);
 
-        // Reveal toggle
         const uint64_t revealKey = MakeCopyKey(rowKey, fieldIndex + 100);
         bool revealed = g_revealed_fields.count(revealKey) > 0;
 
@@ -1166,7 +1108,6 @@ namespace ui
             revealed = !revealed;
         }
 
-        // Main area (click to copy)
         ImGui::SetCursorScreenPos(mainRect.Min);
         ImGui::InvisibleButton("##copy_area", mainRect.GetSize());
         const bool copy_clicked = ImGui::IsItemClicked();
@@ -1183,7 +1124,6 @@ namespace ui
             ShowToast("Copied", ToastType::Success);
         }
 
-        // Show actual value when revealed, label/masked otherwise
         const std::string display = value.empty() ? "-" : (revealed ? value : display_value);
 
         ImVec2 text_sz = ImGui::CalcTextSize(display.c_str());
@@ -1194,7 +1134,6 @@ namespace ui
             ImVec2(eyeRect.Min.x - 4.0f, rowRect.Max.y)
         );
 
-        // Flash text green on copy
         bool copied = false;
         const float now = (float)ImGui::GetTime();
         auto it = g_copy_flash.find(flashKey);
@@ -1221,7 +1160,6 @@ namespace ui
         );
         ImGui::PopStyleColor();
 
-        // Eye icon + tooltip
         {
             dl->AddRectFilled(eyeRect.Min, eyeRect.Max, (rowHovered || eye_hovered) ? bgHover : bg, 0.0f);
             const char* eyeLabel = revealed ? ICON_MDI_EYE : ICON_MDI_EYE_OFF;
@@ -1260,7 +1198,6 @@ namespace ui
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        // Layout constants
         const float maxCardW = 900.0f;
         const float rawAvailW = ImGui::GetContentRegionAvail().x - 32.f;
         const float availW = ImMin(rawAvailW, maxCardW);
@@ -1271,15 +1208,11 @@ namespace ui
         const float cbColW = 28.0f;  // Checkbox gutter width
         const float cbPadL = 6.0f;   // Checkbox left padding
 
-        // Colors (theme-aware)
         const ImU32 colCard = ImGui::GetColorU32(GetCardHeaderBg());
         const ImU32 colBorder = ImGui::GetColorU32(colors::Trans);
 
         ImVec2 rowMin = ImGui::GetCursorScreenPos();
 
-        // ============================================================
-        // CHECKBOX (left gutter)
-        // ============================================================
         ImRect cardRect(
             ImVec2(rowMin.x + cbColW, rowMin.y),
             ImVec2(rowMin.x + availW, rowMin.y + headerH)
@@ -1287,7 +1220,6 @@ namespace ui
 
         ImGui::PushID((void*)(uintptr_t)rowKey);
 
-        // Show checkbox on hover or when any selection exists
         ImVec2 mp = ImGui::GetMousePos();
         const bool anyPopup = ImGui::IsPopupOpen((const char*)NULL, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || (g_shell_ptr && g_shell_ptr->settings_modal_open);
         const bool rowHovered = !anyPopup && ImRect(rowMin, ImVec2(rowMin.x + availW, rowMin.y + headerH)).Contains(mp);
@@ -1307,16 +1239,12 @@ namespace ui
             }
         }
 
-        // Check if card is open (need to know for shadow height)
         const bool open = (g_open.count(rowKey) != 0);
 
-        // ============================================================
-        // CARD SHADOW (multi-ring for subtle elevation)
-        // ============================================================
-        const float shadowOffset = 2.0f;  // Slight downward offset
+        // multi-ring shadow — slight downward bias for elevation feel
+        const float shadowOffset = 2.0f;
         const ImVec2 shadowStart = ImVec2(cardRect.Min.x, cardRect.Min.y + shadowOffset);
 
-        // Ring 1 (outermost, most transparent)
         dl->AddRectFilled(
             ImVec2(shadowStart.x - 4.0f, shadowStart.y - 4.0f),
             ImVec2(cardRect.Max.x + 4.0f, cardRect.Max.y + 4.0f),
@@ -1324,23 +1252,18 @@ namespace ui
             rounding
         );
 
-        // Ring 2
         dl->AddRectFilled(
             ImVec2(shadowStart.x - 2.0f, shadowStart.y - 2.0f),
             ImVec2(cardRect.Max.x + 2.0f, cardRect.Max.y + 2.0f),
             GetShadowColor(1, rowHovered),
             rounding
         );
-
-        // Ring 3
         dl->AddRectFilled(
             ImVec2(shadowStart.x - 1.0f, shadowStart.y - 1.0f),
             ImVec2(cardRect.Max.x + 1.0f, cardRect.Max.y + 1.0f),
             GetShadowColor(2, rowHovered),
             rounding
         );
-
-        // Ring 4 (innermost, most opaque)
         dl->AddRectFilled(
             shadowStart,
             cardRect.Max,
@@ -1348,22 +1271,18 @@ namespace ui
             rounding
         );
 
-        // ============================================================
-        // CARD HEADER (background + click handler)
-        // ============================================================
         dl->AddRectFilled(cardRect.Min, cardRect.Max, colCard, rounding);
         if (c.is_changed)
             dl->AddRectFilled(cardRect.Min, cardRect.Max,
                 (c.changed_fields & FCF_IsNew) ? kNewRowTint : kChangedRowTint, rounding);
         dl->AddRect(cardRect.Min, cardRect.Max, colBorder, rounding, 0, 1.0f);
 
-        // Click to toggle expand
         ImGui::SetCursorScreenPos(cardRect.Min);
         ImGui::InvisibleButton("##acc_header_btn", cardRect.GetSize());
 
         if (ImGui::IsItemActivated())
         {
-            g_hover_opened.erase(rowKey); // click-opened items persist
+            g_hover_opened.erase(rowKey); // click-open persists; hover-open does not
             if (g_open.count(rowKey)) {
                 g_open.erase(rowKey);
                 g_notes_visible.erase(rowKey);
@@ -1371,12 +1290,12 @@ namespace ui
             }
             else {
                 g_open.insert(rowKey);
-                g_scroll_to_open[rowKey] = 2;  // Wait 2 frames for body to fully render
+                g_scroll_to_open[rowKey] = 2;  // 2 frames lets the body render before scroll
             }
             out.interacted = true;
         }
 
-        // Hover-expand: open on header hover (close is deferred until after body render)
+        // hover-expand: close is deferred until after body render so the cursor doesn't escape
         if (g_shell_ptr && g_shell_ptr->hover_expand)
         {
             if (rowHovered && !g_open.count(rowKey))
@@ -1386,7 +1305,6 @@ namespace ui
             }
         }
 
-        // Right-click context menu on header (only if no other popup is open)
         bool detailedCtxAllowed = !ImGui::IsPopupOpen((const char*)NULL, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)
                                || ImGui::IsPopupOpen("##detailed_row_ctx");
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,  8.0f);
@@ -1419,9 +1337,6 @@ namespace ui
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(5);
 
-        // ============================================================
-        // TITLE + SUBTITLE + STATUS ICONS (PIN/FAV)
-        // ============================================================
         const auto& cols = g_shell_ptr->detailed_header_cols;
         const char* title = (!c.title.empty()) ? c.title.c_str() : "(untitled)";
         const std::string lastEdited = FormatUnixMsDateOnly(c.updated_at_ms != 0 ? c.updated_at_ms : c.created_at_ms);
@@ -1430,7 +1345,7 @@ namespace ui
 
         float rightX = cardRect.Max.x - padX;
 
-        // Draw from right to left: Index number first (far right)
+        // right-to-left: index first, then pin/fav, badges, chevron
         if (cols.index && displayIndex >= 0)
         {
             char indexBuf[16];
@@ -1442,7 +1357,6 @@ namespace ui
             rightX -= chipGap;
         }
 
-        // Pin/Fav icons (to the left of index)
         if (cols.pin_fav)
         {
             if (c.is_favorite)
@@ -1496,16 +1410,13 @@ namespace ui
             }
         }
 
-        // Security badges (weak/reused)
         rightX = DrawSecurityBadges(dl, g_shell_ptr, c.id, rightX,
             cardRect.Min.y + (headerH - ImGui::GetTextLineHeight()) * 0.5f, chipGap);
 
-        // Chevron icon
         const char* chev = open ? ICON_MDI_CHEVRON_DOWN : ICON_MDI_CHEVRON_RIGHT;
         ImVec2 chevPos(cardRect.Min.x + padX, cardRect.Min.y + (headerH - ImGui::GetTextLineHeight()) * 0.5f);
         dl->AddText(chevPos, ImGui::GetColorU32(ImGuiCol_TextDisabled), chev);
 
-        // Type icon / favicon before title
         float textX = cardRect.Min.x + padX + 22.0f;
         {
             auto srv = favicon::Get(c.website);
@@ -1528,12 +1439,10 @@ namespace ui
             }
         }
 
-        // Title (line 1) + subtitle (line 2), vertically centered
         float titleFontSize = render::FontBold ? render::FontBold->LegacySize : ImGui::GetTextLineHeight();
         float subFontSize = render::FontSmall ? render::FontSmall->LegacySize : ImGui::GetTextLineHeight();
 
-        // Build subtitle per Credential type
-        static std::string subBuf; // static to keep c_str() alive for draw
+        static std::string subBuf; // kept static so c_str() lives past the draw call
         const char* subText = nullptr;
         subBuf.clear();
         if (c.type == CredType::Password && cols.sub_password)
@@ -1568,7 +1477,6 @@ namespace ui
         float blockH = titleFontSize + (subText ? gap + subFontSize : 0.0f);
         float blockY = cardRect.Min.y + (headerH - blockH) * 0.5f;
 
-        // Line 1: title (or username if no title)
         if (cols.title)
         {
             dl->AddText(render::FontBold, titleFontSize, ImVec2(textX, blockY), ImGui::GetColorU32(ImGuiCol_Text), title);
@@ -1579,7 +1487,6 @@ namespace ui
                 ImVec2(textX, blockY), ImGui::GetColorU32(ImGuiCol_TextDisabled), c.user.c_str());
         }
 
-        // Line 2: subtitle
         if (subText)
         {
             dl->AddText(render::FontSmall, subFontSize,
@@ -1587,7 +1494,6 @@ namespace ui
                 ImGui::GetColorU32(ImGuiCol_TextDisabled), subText);
         }
 
-        // Date in center (date only, no time)
         if (cols.date && !lastEdited.empty())
         {
             ImVec2 size = ImGui::CalcTextSize(lastEdited.c_str());
@@ -1596,15 +1502,12 @@ namespace ui
             dl->AddText(pos, ImGui::GetColorU32(ImGuiCol_TextDisabled), lastEdited.c_str());
         }
 
-        // ============================================================
-        // CARD BODY (when expanded) - same as simple rows
-        // ============================================================
         const float dt_card = ImGui::GetIO().DeltaTime;
         float& storedH = g_card_body_h[rowKey];
         float& animH   = g_card_anim_h[rowKey];
         bool isClosing  = g_card_closing.count(rowKey) != 0;
 
-        // If close was requested during measurement frame (no stored height yet), cancel it
+        // close requested before first measurement — cancel it
         if (isClosing && storedH < 1.0f) {
             g_card_closing.erase(rowKey);
             isClosing = false;
@@ -1612,7 +1515,6 @@ namespace ui
 
         bool renderBody = open || isClosing;
 
-        // Advance animation
         if (open) {
             float targetH = (storedH > 0.0f) ? storedH : 0.0f;
             if (targetH > 0.0f) {
@@ -1635,9 +1537,9 @@ namespace ui
             ImVec2 bodyStartPos = ImVec2(cardRect.Min.x, cardRect.Max.y);
             ImGui::SetCursorScreenPos(bodyStartPos);
 
-            // Use channel splitting so shadow draws behind body content
+            // channel split: shadow draws behind body content
             dl->ChannelsSplit(2);
-            dl->ChannelsSetCurrent(1);  // Content channel
+            dl->ChannelsSetCurrent(1);
 
             ImU32 bodyBgColor = GetCardBodyBg();
             ImGui::PushStyleColor(ImGuiCol_ChildBg, bodyBgColor);
@@ -1665,18 +1567,16 @@ namespace ui
 
             float contentW = ImGui::GetContentRegionAvail().x;
             const float columnGap = 16.0f;
-            const float leftColW = contentW * 0.45f;  // 45% for info
-            const float rightColW = contentW - leftColW - columnGap;  // 55% for security/notes
+            const float leftColW = contentW * 0.45f;
+            const float rightColW = contentW - leftColW - columnGap;
             const float labelW = 90.0f;
             const float rowSpacing = 6.0f;
 
-            // LEFT COLUMN: Action buttons + info rows
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetColorU32(colors::Trans));
 
             ImGui::BeginChild("##left_col", ImVec2(leftColW, 0), ImGuiChildFlags_AutoResizeY, ImGuiWindowFlags_NoScrollbar);
             ImGui::PushItemWidth(leftColW - 20.0f);
 
-            // Action buttons at top of left column
             {
                 const float ibSz = 26.0f;
                 const float ibGap = 4.0f;
@@ -1695,7 +1595,6 @@ namespace ui
                     if (IconSquareBtn("##ab_edit_d", ICON_MDI_PENCIL, "Edit", ibSz))
                     { out.edit_open_requested = true; out.interacted = true; }
 
-                    // Delete — right-aligned on same line
                     const float delW = 95.0f;
                     const float delH = ibSz;
                     ImGui::SameLine();
@@ -1828,7 +1727,6 @@ namespace ui
                 EndLiftedChild();
             }
 
-            // Timestamps (single line)
             ImGui::Dummy(ImVec2(0, 4.0f));
 
             ImGui::PopItemWidth();
@@ -1836,7 +1734,6 @@ namespace ui
             const float leftColRenderedH_d = ImGui::GetItemRectSize().y;
             ImGui::PopStyleColor();
 
-            // RIGHT COLUMN: Security / Notes Tabs
             ImGui::SameLine(0, columnGap);
             const float rcPadRight = 16.0f;
             ImGui::BeginGroup();
@@ -1849,7 +1746,6 @@ namespace ui
                 int& rcTab = s_rc_tab_d[c.id];
                 if (!hasSecurityRC && rcTab == 0) rcTab = 1;
 
-                // Tab bar
                 {
                     const bool dark = IsDarkTheme();
                     const float tabH = 28.0f;
@@ -1930,12 +1826,11 @@ namespace ui
 
                         curX += w;
 
-                        // 3D divider between tabs
+                        // 3D divider — shine/shadow flips depending on which side is active
                         if (i < numTabs - 1)
                         {
                             ImU32 shineLine  = dark ? IM_COL32(255, 255, 255, 8) : IM_COL32(255, 255, 255, 80);
                             ImU32 shadowLine = dark ? theme::SplitterShadow.dark : theme::SplitterShadow.light;
-                            // Flip divider based on which side is active
                             ImU32 leftLine  = active ? shineLine  : shadowLine;
                             ImU32 rightLine = active ? shadowLine : shineLine;
                             dl->AddLine(
@@ -1953,7 +1848,6 @@ namespace ui
                     ImGui::SetCursorScreenPos(ImVec2(pillPos.x, pillPos.y + tabH + 4.0f));
                 }
 
-                // Tab content
                 ImGui::Dummy(ImVec2(0, 3.0f));
                 if (rcTab == 0 && hasSecurityRC && g_shell_ptr)
                 {
@@ -2043,7 +1937,6 @@ namespace ui
 
             ImGui::Unindent(bodyPadX);
 
-            // Timestamps (full card width, below both columns)
             if (c.created_at_ms != 0 || c.updated_at_ms != 0)
             {
                 ImGui::Dummy(ImVec2(0, 4));
@@ -2066,7 +1959,6 @@ namespace ui
 
             ImGui::EndChild();
 
-            // Capture natural height
             float renderedH = ImGui::GetItemRectSize().y;
             if (firstOpen) {
                 ImGui::PopStyleVar(); // Alpha
@@ -2082,7 +1974,7 @@ namespace ui
 
             if (!firstOpen)
             {
-                // Auto-scroll if this item was just opened (wait for animation to finish)
+                // auto-scroll after animation settles (2-frame countdown)
                 auto scroll_it = g_scroll_to_open.find(rowKey);
                 if (scroll_it != g_scroll_to_open.end())
                 {
@@ -2094,10 +1986,7 @@ namespace ui
                     }
                 }
 
-                // Switch to background channel for shadow
-                dl->ChannelsSetCurrent(0);
-
-                // Body shadow — each ring starts below header shadow's corresponding extension
+                dl->ChannelsSetCurrent(0); // draw shadow behind body content
                 ImVec2 bodyEndPos = ImGui::GetCursorScreenPos();
                 ImVec2 fullCardMax = ImVec2(cardRect.Max.x, bodyEndPos.y);
 
@@ -2110,12 +1999,11 @@ namespace ui
                 dl->AddRectFilled(ImVec2(cardRect.Min.x, cardRect.Max.y), fullCardMax, GetShadowColor(3, rowHovered), rounding, ImDrawFlags_RoundCornersBottom);
             }
 
-            // Merge channels back
             dl->ChannelsMerge();
 
             if (firstOpen)
             {
-                // Measurement frame — reset cursor to collapsed position
+                // measurement frame — reset cursor to collapsed position
                 ImGui::SetCursorScreenPos(ImVec2(cardRect.Min.x, cardRect.Max.y));
                 ImGui::Dummy(ImVec2(0, 8));
             }
@@ -2126,7 +2014,7 @@ namespace ui
             ImGui::Dummy(ImVec2(0, 8));
         }
 
-        // Hover-expand: deferred close — check full card area (header + body)
+        // hover-expand: close deferred until here so cursor doesn't escape during body render
         if (g_shell_ptr && g_shell_ptr->hover_expand && g_hover_opened.count(rowKey))
         {
             ImVec2 endPos = ImGui::GetCursorScreenPos();
@@ -2180,12 +2068,9 @@ namespace ui
         const bool anyPopup = ImGui::IsPopupOpen((const char*)NULL, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || (g_shell_ptr && g_shell_ptr->settings_modal_open);
         const bool rowHovered = !anyPopup && ImGui::IsMouseHoveringRect(tileRect.Min, tileRect.Max);
 
-        // ============================================================
-        // 1) SOFT SHADOW (bottom-heavy, thins toward top)
-        // ============================================================
+        // soft shadow — bottom-heavy, thins toward top
         {
-            const float shadowOff = 3.0f; // push shadow down
-            // Each ring: expand more on bottom/sides, less on top
+            const float shadowOff = 3.0f;
             struct ShadowRing { float top; float side; float bot; };
             ShadowRing rings[] = {
                 { 0.0f, 3.0f, 6.0f },  // outermost
@@ -2202,24 +2087,15 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // 2) CARD FILL (theme-aware)
-        // ============================================================
         const ImU32 bg = ImGui::GetColorU32(GetTileBg());
         dl->AddRectFilled(cardRect.Min, cardRect.Max, bg, rounding);
         if (c.is_changed)
             dl->AddRectFilled(cardRect.Min, cardRect.Max,
                 (c.changed_fields & FCF_IsNew) ? kNewRowTint : kChangedRowTint, rounding);
 
-        // ============================================================
-        // 3) STATUS (icons only, no border)
-        // ============================================================
-        const ImU32 colRed = GetFavoriteColor();   // Favorite red
-        const ImU32 colBlue = ImGui::GetColorU32(colors::MainColor); // Pinned blue
+        const ImU32 colRed = GetFavoriteColor();
+        const ImU32 colBlue = ImGui::GetColorU32(colors::MainColor);
 
-        // ============================================================
-        // CHECKBOX (selection)
-        // ============================================================
         const bool showCb = rowHovered || sel || anySel;
         if (showCb)
         {
@@ -2236,18 +2112,12 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // CARD CONTENT
-        // ============================================================
         TileCardState& state = flipState;
         ImGui::PushClipRect(cardRect.Min, cardRect.Max, true);
 
         if (!state.flipped)
         {
-            // Front face: title, subtitle, date (bottom left), icons (bottom right)
             const char* title = (!c.title.empty()) ? c.title.c_str() : "(untitled)";
-
-            // Type-aware subtitle
             std::string subtitle;
             if (c.type == CredType::CreditCard) {
                 if (c.card_number.size() >= 4)
@@ -2295,19 +2165,17 @@ namespace ui
             ImVec2 titlePos(titleDrawX, cardRect.Min.y + pad + 6.0f);
             dl->AddText(render::FontBold, titleFontSize, titlePos, ImGui::GetColorU32(ImGuiCol_Text), title);
 
-            // Subtitle (below title)
             if (!subtitle.empty())
             {
                 ImVec2 subPos(cardRect.Min.x + pad, cardRect.Min.y + pad + 6.0f + titleFontSize + 4.0f);
                 dl->AddText(render::FontSmall, subFontSize, subPos, ImGui::GetColorU32(ImGuiCol_TextDisabled), subtitle.c_str());
             }
 
-            // Bottom-right icons (pin/fav + security badges)
+            // bottom-right: fav, pin, timer badge (right-to-left)
             {
                 float iconX = cardRect.Max.x - pad;
                 float iconY = cardRect.Max.y - pad - ImGui::GetTextLineHeight();
 
-                // Heart (rightmost) - RED
                 if (c.is_favorite)
                 {
                     const char* fav = ICON_MDI_HEART;
@@ -2317,7 +2185,6 @@ namespace ui
                     iconX -= 6.0f;
                 }
 
-                // Thumbtack (left of heart) - BLUE
                 if (c.is_pinned)
                 {
                     const char* pin = ICON_MDI_PIN;
@@ -2327,7 +2194,6 @@ namespace ui
                     iconX -= 6.0f;
                 }
 
-                // Timer badge
                 if (c.expires_at_ms != 0)
                 {
                     if (c.expires_at_ms < 0) {
@@ -2357,12 +2223,12 @@ namespace ui
                     }
                 }
 
-                // Security badges moved outside tile (drawn after PopClipRect)
+                // security badges drawn after PopClipRect (outside clip)
             }
         }
         else
         {
-            // Back face: copy field rows inside the tile
+            // back face: copy field rows
             const float headerH = 4.0f;
             const float bodyTop = cardRect.Min.y + headerH;
             const float bodyH = cardRect.Max.y - bodyTop - 4.0f;
@@ -2376,7 +2242,6 @@ namespace ui
 
             float innerW = ImGui::GetContentRegionAvail().x + 2.0f;
 
-            // Lifted child container for info rows
             {
                 bool dk = IsDarkTheme();
                 LiftedChildColorSet lc;
@@ -2461,7 +2326,6 @@ namespace ui
                     else if (c.type == CredType::SecureNote && !c.notes.empty())
                     {
                         const bool noteRepromptActive = cfg::get_reprompt_reveal_notes();
-                        // Check deferred reprompt approval
                         if (noteRepromptActive && g_notes_reprompt_pending == rowKey && IsRepromptApproved(RepromptAction::RevealNotes))
                         {
                             g_notes_visible.insert(rowKey);
@@ -2477,7 +2341,6 @@ namespace ui
 
                         if (notesRevealed)
                         {
-                            // "Hide notes" link
                             const char* linkLabel = "Hide notes";
                             const char* chevron = " " ICON_MDI_CHEVRON_UP;
                             ImVec2 textSz = ImGui::CalcTextSize(linkLabel);
@@ -2504,7 +2367,6 @@ namespace ui
 
                             ImGui::Spacing();
 
-                            // Read-only multiline notes (selectable text)
                             std::string notesDisplay = c.notes;
                             float notesW = liftedW - notePadX * 2.0f;
                             ImVec2 fpad(8.0f, 6.0f);
@@ -2523,7 +2385,6 @@ namespace ui
                         }
                         else
                         {
-                            // "Reveal notes" link
                             const char* linkLabel = "Reveal notes";
                             const char* chevron = " " ICON_MDI_CHEVRON_DOWN;
                             ImVec2 textSz = ImGui::CalcTextSize(linkLabel);
@@ -2568,19 +2429,16 @@ namespace ui
             }
             if (!c.group.empty())
             {
-                // Simple group label with folder icon right-aligned
                 const float gPadX = 10.0f;
                 ImVec2 gPos = ImGui::GetCursorScreenPos();
                 float gH = ImGui::GetTextLineHeight() + 4.0f;
                 ImDrawList* gdl = ImGui::GetWindowDrawList();
 
-                // Folder icon right-aligned
                 ImVec2 icoSz = ImGui::CalcTextSize(ICON_MDI_FOLDER);
                 gdl->AddText(
                     ImVec2(gPos.x + innerW - icoSz.x - gPadX, gPos.y + (gH - icoSz.y) * 0.5f),
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), ICON_MDI_FOLDER);
 
-                // Group text left-aligned with same padding as rows
                 ImGui::PushFont(render::FontSmall);
                 ImGui::SetCursorScreenPos(ImVec2(gPos.x + gPadX, gPos.y));
                 ImGui::TextDisabled("%s", c.group.c_str());
@@ -2595,9 +2453,7 @@ namespace ui
 
         ImGui::PopClipRect();
 
-        // ============================================================
-        // SECURITY BADGES (outside tile, right edge, stacked vertically)
-        // ============================================================
+        // security badges — outside tile clip rect, stacked at right edge
         if (g_shell_ptr) {
             float badgeX = cardRect.Max.x + 3.0f;
             float badgeY = cardRect.Min.y;
@@ -2619,15 +2475,13 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // INTERACTIONS
-        // ============================================================
-        // Right-click opens popup
+        // right-click popup (skipped if a modal is open)
         char popupId[32];
         snprintf(popupId, sizeof(popupId), "##tile_popup_%d", c.id);
 
         static std::unordered_map<int, int> s_tile_popup_tab;
-        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && cardRect.Contains(ImGui::GetMousePos()))
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && cardRect.Contains(ImGui::GetMousePos())
+            && ImGui::GetTopMostPopupModal() == nullptr)
         {
             ImGui::OpenPopup(popupId);
             s_tile_popup_tab[c.id] = 0;
@@ -2654,7 +2508,6 @@ namespace ui
                 ImGui::Dummy(ImVec2(secW, 0));
             }
 
-            // ============================================================ TAB 0: Details ============
             if (tileTab == 0)
             {
                 ImGui::PushFont(render::FontBold);
@@ -2662,7 +2515,6 @@ namespace ui
                 ImGui::PopFont();
                 ImGui::Dummy(ImVec2(0, 4));
 
-                // Quick action icon bar
                 {
                     const float ibSz = 28.0f;
                     const float ibGap = 4.0f;
@@ -2703,7 +2555,6 @@ namespace ui
                     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(winX, itemMin.y), ImVec2(winX + winW, itemMax.y), colors::DeleteTint, 4.0f);
                 }
             }
-            // ============================================================ TAB 1: Notes ============
             else if (tileTab == 1)
             {
                 const bool noteLocked = cfg::get_reprompt_reveal_notes() && !g_notes_visible.count(rowKey);
@@ -2764,7 +2615,6 @@ namespace ui
                     ImGui::PopStyleColor(2);
                 }
             }
-            // ============================================================ TAB 2: Security ============
             else if (tileTab == 2 && hasSecurityTab)
             {
                 const char* pw = get_password_fn ? get_password_fn(c.id) : "";
@@ -2776,7 +2626,6 @@ namespace ui
                 }
                 ImGui::Dummy(ImVec2(0, 4));
 
-                // Strength analysis hints
                 if (!pwStr.empty())
                 {
                     helpers::PwStrength ps = helpers::analyze_password(pwStr);
@@ -2812,7 +2661,6 @@ namespace ui
                     ImGui::Spacing();
                 }
 
-                // Issue badges
                 bool hasIssue = false;
                 if (g_shell_ptr && g_shell_ptr->sec_weak_ids.count(c.id)) {
                     ImGui::TextColored(ImVec4(174/255.f, 41/255.f, 41/255.f, 1.0f), ICON_MDI_ALERT " Weak password");
@@ -2821,7 +2669,6 @@ namespace ui
                 if (g_shell_ptr && g_shell_ptr->sec_reused_ids.count(c.id)) {
                     ImGui::TextColored(ImVec4(190/255.f, 156/255.f, 63/255.f, 1.0f), ICON_MDI_REPEAT " Reused password");
                     hasIssue = true;
-                    // List credentials sharing same password
                     if (!pwStr.empty()) {
                         ImGui::PushFont(render::FontSmall);
                         ImGui::TextDisabled("Also used by:");
@@ -2864,7 +2711,6 @@ namespace ui
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(5);
 
-        // Hover-flip logic (skip if popup is open)
         if (g_shell_ptr && g_shell_ptr->hover_expand && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId))
         {
             if (rowHovered && !state.flipped)
@@ -2880,7 +2726,6 @@ namespace ui
             }
         }
 
-        // Left-click flips the card (skip if any popup is open)
         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && cardRect.Contains(ImGui::GetMousePos()) &&
             !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId))
         {
@@ -2898,11 +2743,6 @@ namespace ui
         return out;
     }
 
-    // ============================================================
-    // ============================================================
-    // ACCORDION LIST DISPATCHER
-    // ============================================================
-
     AccordionListResult RenderAccordionList(
         const std::vector<AccordionItem>& items,
         uint32_t activeVaultKey,
@@ -2910,13 +2750,11 @@ namespace ui
         bool read_only,
         ViewMode view_mode)
     {
-        // Table view — flat spreadsheet
         if (view_mode == ViewMode::Table)
         {
             return RenderTableView(items, activeVaultKey, get_password_fn, read_only);
         }
 
-        // Three-Pane view has its own layout (sidebar + list + detail)
         if (view_mode == ViewMode::ThreePane)
         {
             return RenderThreePaneView(items, activeVaultKey, get_password_fn, read_only);
@@ -2932,7 +2770,7 @@ namespace ui
 
         ImGui::Dummy(ImVec2(0, 6));
         bool hit = false;
-        int displayIndex = 1;  // Start at 1 for user-friendly display
+        int displayIndex = 1;
 
         if (view_mode == ViewMode::Tiles)
         {
@@ -2972,7 +2810,6 @@ namespace ui
                         hdrCollapsed = !hdrCollapsed;
                     }
                     ImGui::PopStyleColor();
-                    // Draw chevron on far right
                     ImVec2 chevSz = ImGui::CalcTextSize(chevron);
                     ImVec2 rMin = ImGui::GetItemRectMin();
                     ImVec2 rMax = ImGui::GetItemRectMax();
@@ -3040,7 +2877,6 @@ namespace ui
                         hdrCollapsed = !hdrCollapsed;
                     }
                     ImGui::PopStyleColor();
-                    // Draw chevron on far right
                     ImVec2 chevSz = ImGui::CalcTextSize(chevron);
                     ImVec2 rMin = ImGui::GetItemRectMin();
                     ImVec2 rMax = ImGui::GetItemRectMax();
@@ -3097,8 +2933,7 @@ namespace ui
             }
         }
 
-        // Click blank space to clear selection:
-        // Keep this allowed even in read-only (it doesn't mutate vault data)
+        // click blank space clears selection (allowed even read-only — no vault mutation)
         if (ImGui::IsMouseClicked(0) && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
         {
             if (!hit && !ImGui::IsAnyItemHovered())
@@ -3108,7 +2943,7 @@ namespace ui
         return out;
     }
 
-    void ForgetRowState(uint32_t activeVaultKey, int id) // NEW signature
+    void ForgetRowState(uint32_t activeVaultKey, int id)
     {
         uint64_t rowKey = MakeRowKey(activeVaultKey, id);
         g_selected.erase(MakeRowKey(activeVaultKey, id));
@@ -3123,7 +2958,6 @@ namespace ui
         g_card_closing.erase(rowKey);
     }
 
-    // (Optional convenience)
     void ForgetRowStateRowKey(uint64_t rowKey)
     {
         g_selected.erase(rowKey);
@@ -3153,11 +2987,8 @@ namespace ui
         g_card_closing.clear();
     }
 
-    // g_shell_open, g_sortAnim, g_orderAnim, g_searchAnim defined in ui_controls.cpp
-
     void ForgetVaultRowState(uint32_t activeVaultKey)
     {
-        // g_edit: unordered_map<uint64_t, EditBuffers>
         for (auto it = g_edit.begin(); it != g_edit.end(); )
         {
             uint64_t rk = it->first;
@@ -3167,7 +2998,6 @@ namespace ui
                 ++it;
         }
 
-        // g_open: unordered_set<uint64_t>
         for (auto it = g_open.begin(); it != g_open.end(); )
         {
             uint64_t rk = *it;

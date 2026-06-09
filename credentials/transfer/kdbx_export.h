@@ -1,5 +1,4 @@
-// kdbx_export.h
-// Write-only KDBX4 export for KeePass/KeePassXC migration
+// kdbx_export.h — write-only KDBX4 export (KeePass/KeePassXC migration)
 #pragma once
 
 #include <string>
@@ -14,7 +13,6 @@ namespace kdbx_export {
         std::string error;
     };
 
-    // Export credentials to a KDBX4 file (KeePass compatible)
     ExportResult export_kdbx(
         const std::vector<Credential>& creds,
         const std::string& password,

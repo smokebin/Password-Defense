@@ -1,5 +1,4 @@
 // twofa_ops.cpp
-// Two-factor authentication business logic
 
 #include "twofa_ops.h"
 #include "vault_db.h"
@@ -13,16 +12,14 @@
 
 namespace twofa_ops {
 
-// Fixed AAD string for 2FA blob encryption (not a Credential UUID)
-static const std::string kTwoFaAAD = "vault-2fa-config";
+static const std::string kTwoFaAAD = "vault-2fa-config";  // fixed AAD, not a credential UUID
 
-// Charset for recovery codes: A-Z minus ambiguous O/I, digits 2-9 (no 0/1)
+// A-Z minus O/I, digits 2-9 (no 0/1) — avoids ambiguous glyphs
 static const char kRecoveryCharset[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-static const uint32_t kRecoveryCharsetLen = sizeof(kRecoveryCharset) - 1; // 30
+static const uint32_t kRecoveryCharsetLen = sizeof(kRecoveryCharset) - 1;
 
 std::string make_recovery_code()
 {
-    // Format: XXXX-XXXX (8 chars + dash)
     std::string code;
     code.reserve(9);
     for (int i = 0; i < 8; ++i) {
@@ -97,7 +94,6 @@ bool verify_totp(const std::string& code, const std::vector<uint8_t>& master_key
     return totp::verify_code_now(data.totp_secret_b32, code);
 }
 
-// Normalize recovery code input: uppercase, strip whitespace
 static std::string normalize_recovery(const std::string& input)
 {
     std::string out;
@@ -116,23 +112,20 @@ bool verify_recovery(const std::string& code, const std::vector<uint8_t>& master
 
     std::string normalized = normalize_recovery(code);
 
-    // Constant-time comparison: always iterate all codes to prevent timing side-channel
+    // always iterate all codes — timing side-channel otherwise
     int match_idx = -1;
     for (int i = 0; i < (int)data.recovery_codes.size(); ++i) {
         const auto& rc = data.recovery_codes[i];
         if (rc.size() == normalized.size() &&
             sodium_memcmp(rc.data(), normalized.data(), rc.size()) == 0) {
             match_idx = i;
-            // Don't break — always iterate all codes for constant-time behavior
+            // no break — constant-time
         }
     }
 
     if (match_idx < 0) return false;
 
-    // Consume the code
     data.recovery_codes.erase(data.recovery_codes.begin() + match_idx);
-
-    // Re-save with the code removed
     save(data, master_key);
     return true;
 }

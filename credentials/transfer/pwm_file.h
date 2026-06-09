@@ -1,5 +1,4 @@
-// pwm_file.h
-// Encrypted .pwm export/import for vault backup and transfer
+// pwm_file.h — encrypted .pwm export/import (vault backup and transfer)
 #pragma once
 
 #include <string>
@@ -21,13 +20,11 @@ namespace pwm_file {
         std::vector<Credential> creds;
     };
 
-    // Export credentials to an encrypted .pwm file
     ExportResult export_pwm(
         const std::vector<Credential>& creds,
         const std::string& export_password,
         const char* file_path);
 
-    // Import credentials from an encrypted .pwm file
     ImportResult import_pwm(
         const std::string& import_password,
         const std::string& file_path);

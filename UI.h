@@ -1,4 +1,4 @@
-// UI.h
+// UI.h — shell state, accordion types, widget declarations
 #pragma once
 
 #include "third_party/imgui/imgui.h"
@@ -54,15 +54,12 @@ namespace ui
 
     struct ShellState
     {
-        // Animated DB top tabs
         std::vector<std::string> db_labels;
         int active_db = 0;
 
-        // Top bar toggles (optional; you can ignore them)
         bool search_open = false;
         bool options_open = false;
 
-        // Control row
         int filter_mode;
         int search_filter = 0; // 0=title, 1=email, 2=username
         int sort_mode = 2; // 0=tab0, 1=tab1, 2=all
@@ -73,7 +70,6 @@ namespace ui
         std::vector<std::string> all_tags;       // sorted unique tag list
         std::set<std::string> selected_tags;     // empty = show all; OR logic
 
-        // Intent flags (one-frame)
         bool add_clicked = false;
         bool undo_clicked = false;
         bool back_clicked = false;
@@ -87,7 +83,6 @@ namespace ui
         bool read_only = false;
         bool can_undo = false;         // true when undo stack is non-empty
 
-        // Footer status (set by app every frame)
         std::string footer_status_text;
         bool        footer_status_is_error = false;
 
@@ -95,26 +90,22 @@ namespace ui
         std::string last_save_label;     // e.g. "Last save: 2025-12-27 14:17"
 
 
-        // Footer intents (one-frame)
         bool footer_open_db_clicked = false;
         bool footer_new_db_clicked = false;
         bool footer_save_clicked = false;
         bool footer_options_clicked = false;
         bool footer_close_clicked = false;
 
-        // Close-confirm flow (one-frame + state)
-        bool footer_close_confirming = false; // stateful (persists until resolved)
+        bool footer_close_confirming = false; // stateful, persists until resolved
         bool footer_close_anyway = false; // one-frame intent
         bool footer_close_cancel = false; // one-frame intent
 
-        // Delete vault flow
-        bool delete_vault_clicked = false;     // one-frame intent
-        bool delete_vault_confirming = false;   // stateful (modal open)
-        bool delete_vault_confirmed = false;    // one-frame intent
+        bool delete_vault_clicked = false;
+        bool delete_vault_confirming = false;   // modal open
+        bool delete_vault_confirmed = false;
 
-        // footer restore backups
         std::vector<std::string> footer_backups;      // display labels
-        std::vector<std::string> footer_backup_paths; // full paths (same size)
+        std::vector<std::string> footer_backup_paths; // same size as footer_backups
         int  footer_backup_index = 0;
 
         bool footer_restore_clicked = false;
@@ -122,18 +113,16 @@ namespace ui
         bool footer_browse_backup_clicked = false;
         std::string footer_browse_backup_path;  // file picked via Browse
 
-        // Footer options popup
-        bool footer_options_popup_open = false;      // stateful
-        bool footer_create_backup_clicked = false;   // one-frame
-        bool footer_toggle_read_only_clicked = false;// one-frame
+        bool footer_options_popup_open = false;
+        bool footer_create_backup_clicked = false;
+        bool footer_toggle_read_only_clicked = false;
 
         bool footer_set_read_only = false;
         bool footer_set_read_only_value = false;
 
 
-        // Backup settings (stateful)
-        int  backup_keep_count = 25;                // retention
-        bool auto_backup = true;                    // auto-backup on save
+        int  backup_keep_count = 25;
+        bool auto_backup = true;
         bool backup_select_newest_on_refresh = true;
 
         struct BackupMeta
@@ -144,7 +133,6 @@ namespace ui
 
         std::vector<BackupMeta> footer_backup_meta; // same length as footer_backup_paths
 
-        // Selection micro-toolbar intents (one-frame)
         bool bulk_delete_clicked = false;
         bool clear_selection_clicked = false;
         bool select_all_clicked = false;
@@ -155,7 +143,7 @@ namespace ui
         OrderDir  order_dir = OrderDir::Asc;
         GroupMode group_mode = GroupMode::None;
         ViewMode  view_mode = ViewMode::ThreePane;
-        int       three_pane_selected_id = -1;  // selected Credential in 3-pane detail view
+        int       three_pane_selected_id = -1;  // credential shown in detail pane
         bool      three_pane_sidebar_collapsed = false;
         bool      three_pane_list_collapsed = false;
         bool      three_pane_sidebar_auto_collapse = false;
@@ -165,7 +153,6 @@ namespace ui
         bool      sidebar_tags_collapsed = false;
 
 
-        // Bulk intents (one-frame)
         bool bulk_pin_clicked = false;
         bool bulk_unpin_clicked = false;
         bool bulk_fav_clicked = false;
@@ -175,75 +162,59 @@ namespace ui
         std::string bulk_tag_to_add;     // one-frame: tag to add to selected
         std::string bulk_tag_to_remove;  // one-frame: tag to remove from selected
 
-        // Drag-drop: credential → group (one-frame intent)
-        int  drag_drop_cred_id = -1;       // credential ID being dropped
-        std::string drag_drop_target_group; // group name to assign
+        int  drag_drop_cred_id = -1;
+        std::string drag_drop_target_group;
 
-        // Settings page
-        int  settings_tab_index = 0;      // 0=Backup, 1=Vault, 2=User
-        bool settings_clicked = false;    // One-frame intent for opening settings
-        bool autosave_enabled = true;     // Auto-save on changes (stateful)
-        bool autoscroll_enabled = true;   // Auto-scroll to expanded accordion items
-        bool hover_expand = false;        // Auto-expand accordion / flip tiles on hover
-        bool goto_locked_clicked = false; // One-frame intent to return to locked screen
-        bool dark_theme = true;           // Theme: true=dark, false=light
-        bool theme_changed = false;       // One-frame intent when theme toggled
-        bool always_on_top = false;       // Window stays above other windows
-        bool always_on_top_changed = false; // One-frame intent when toggled
-        bool minimize_to_tray = false;    // Close/minimize hide to system tray
-        bool start_on_boot = false;       // Launch at Windows startup (registry)
-        bool start_minimized = false;     // Start hidden in tray (requires minimize_to_tray)
-        bool auto_open_vault = true;      // Auto-select last opened vault on startup
+        int  settings_tab_index = 0;
+        bool settings_clicked = false;
+        bool autosave_enabled = true;
+        bool autoscroll_enabled = true;
+        bool hover_expand = false;
+        bool goto_locked_clicked = false;
+        bool dark_theme = true;
+        bool theme_changed = false;
+        bool always_on_top = false;
+        bool always_on_top_changed = false;
+        bool minimize_to_tray = false;
+        bool start_on_boot = false;
+        bool start_minimized = false;       // requires minimize_to_tray
+        bool auto_open_vault = true;
 
-        // Network & privacy (offline-first — both default OFF)
-        bool online_favicons = false;     // Allow fetching website icons over the internet
-        bool online_breach_check = false; // Allow HIBP k-anonymity breach check
+        // both off by default — offline first
+        bool online_favicons = false;
+        bool online_breach_check = false; // HIBP k-anonymity; no password leaves the machine
 
-        // Screen navigation
-        Screen active_screen = Screen::Locked;  // Start with locked screen
+        Screen active_screen = Screen::Locked;
         std::vector<Screen> screen_stack;
 
-        // Offline mode (user skipped login)
         bool offline_mode = false;
 
-        // Export intents (one-frame)
         bool export_csv_clicked = false;
         bool export_pwm_clicked = false;
         bool export_kdbx_clicked = false;
         bool import_pwm_clicked = false;
         bool import_csv_clicked = false;
 
-        // Detailed header column visibility
         cfg::DetailedHeaderColumns detailed_header_cols;
 
-        // Group header count indicator
         bool show_group_count = true;
-
-        // Spacing between accordion rows
         int row_gap = 6;
 
-        // Custom card background colors (0-1 float RGBA)
         ImVec4 card_bg_dark  = ImVec4(24/255.0f, 24/255.0f, 24/255.0f, 1.0f);
         ImVec4 card_bg_light = ImVec4(236/255.0f, 236/255.0f, 240/255.0f, 1.0f);
 
-        // Font scale (global text size multiplier)
         float font_scale = 1.0f;
-
-        // Privacy mode (mask sensitive fields with bullets)
         bool privacy_mode = false;
-
-        // Blur on unfocus (dim overlay when app loses focus)
         bool blur_on_unfocus = false;
 
-        // Recently used credentials (uuid -> last access timestamp, sorted newest-first, max 25)
+        // uuid → last-access timestamp, newest-first, capped at 25
         struct RecentEntry { std::string uuid; int64_t accessed_at_ms = 0; };
         std::vector<RecentEntry> recent_items;
         std::string recent_touch_uuid;  // one-frame: set by UI when credential is accessed
 
-        // Style editor window
         bool style_editor_open = false;
 
-        // Extended color customization
+
         ImVec4 card_header_bg_dark   = ImVec4(0.086f, 0.086f, 0.086f, 0.95f);
         ImVec4 card_header_bg_light  = ImVec4(0.98f, 0.98f, 0.99f, 1.0f);
         ImVec4 card_body_bg_dark     = ImVec4(27/255.0f, 27/255.0f, 30/255.0f, 1.0f);
@@ -255,31 +226,27 @@ namespace ui
         ImVec4 window_bg_dark        = ImVec4(28/255.0f, 27/255.0f, 30/255.0f, 1.0f);
         ImVec4 window_bg_light       = ImVec4(245/255.0f, 245/255.0f, 247/255.0f, 1.0f);
 
-        // Self-destruct mode (0=Off, 1=Exe Only, 2=Exe+Config, 3=Everything)
-        int self_destruct_mode = 0;
+        int self_destruct_mode = 0; // 0=Off, 1=Exe Only, 2=Exe+Config, 3=Everything
 
-        // Security center stats (computed by app layer)
+        // populated by app layer each frame
         int sec_reused_count = 0;
         int sec_weak_count   = 0;
         int sec_exposed_count = 0;
 
-        // Security highlight toggles (non-persistent, in-memory only)
         bool sec_highlight_reused  = false;
         bool sec_highlight_weak    = false;
         bool sec_highlight_exposed = false;
 
-        // Credential ID sets for highlighting (computed by app layer)
         std::unordered_set<int> sec_reused_ids;
         std::unordered_set<int> sec_weak_ids;
         std::unordered_set<int> sec_exposed_ids;
 
-        // Aging passwords (older than max age threshold)
         int sec_aging_count = 0;
         bool sec_highlight_aging = false;
         std::unordered_set<int> sec_aging_ids;
         int password_max_age_days = 90;  // synced with cfg on startup + slider change
 
-        // Sidebar badge counts (computed by app layer from unfiltered credentials)
+        // sidebar badge counts (unfiltered)
         int sb_count_all = 0;
         int sb_count_pinned = 0;
         int sb_count_favorites = 0;
@@ -289,7 +256,6 @@ namespace ui
         int sb_count_notes = 0;
         std::unordered_map<std::string, int> sb_group_counts;
 
-        // Sidebar inline group items (unfiltered, for collapsible tree view)
         struct SidebarCredItem {
             int id = 0;
             std::string title;
@@ -301,46 +267,34 @@ namespace ui
         std::unordered_set<std::string> sidebar_expanded_groups;
         std::unordered_map<std::string, int> sb_tag_counts;  // per-tag credential counts
 
-        // Breach check state
-        std::atomic<bool> sec_breach_checking{false};  // true while background thread runs
-        std::atomic<int>  sec_breach_checked{0};       // progress: how many checked so far
-        std::atomic<int>  sec_breach_total{0};         // total unique passwords to check
-        std::string sec_breach_error;                  // error message if check fails
-        bool sec_breach_trigger = false;               // one-frame intent: user clicked "Check Now"
+        std::atomic<bool> sec_breach_checking{false};
+        std::atomic<int>  sec_breach_checked{0};
+        std::atomic<int>  sec_breach_total{0};
+        std::string sec_breach_error;
+        bool sec_breach_trigger = false;
 
-        // Breach results staging (written by background thread, consumed on main thread)
+        // staging written by background thread; main thread consumes on sec_breach_done
         std::unordered_set<int> sec_exposed_ids_staging;
         int                     sec_exposed_count_staging = 0;
         std::string             sec_breach_error_staging;
-        std::atomic<bool>       sec_breach_done{false};  // true when background thread has results ready
+        std::atomic<bool>       sec_breach_done{false};
 
-        // 2FA setup state
         bool twofa_setup_open = false;
-
-        // Trash bin modal
         bool trash_modal_open = false;
 
-        // Security Center modal
-        bool sec_center_open = false;         // one-frame intent to open modal
-        int  sec_center_category = 0;         // 0=All, 1=Reused, 2=Weak, 3=Exposed, 4=Expired
-        int  sec_center_edit_id = -1;         // one-frame: Credential ID to open in edit modal
+        bool sec_center_open = false;
+        int  sec_center_category = 0;   // 0=All, 1=Reused, 2=Weak, 3=Exposed, 4=Expired
+        int  sec_center_edit_id = -1;
 
-        // Settings modal
         bool settings_modal_open = false;
 
-        // Recovery key modal (shown once at vault creation)
         bool recovery_key_modal_open = false;
-        std::string recovery_key_display;    // hex with dashes, cleared after modal close
+        std::string recovery_key_display; // hex with dashes; zeroed and cleared after modal closes
 
     };
 
-    // App Style Editor (color customization window)
     void RenderAppStyleEditor(ShellState& s);
-
-    // One-time init (safe to call multiple times)
     bool Initialize();
-
-    // Theme hook (optional)
     void ApplyTheme();
 
     bool IconButtonSquare(
@@ -357,13 +311,11 @@ namespace ui
     void BeginShell(ShellState& s, const char* window_title = "Password Manager");
     void EndShell();
 
-    // Two-part layout helpers (fixed header + scrollable list)
     void BeginShellHeader();
     void EndShellHeader();
     void BeginShellScroll();
     void EndShellScroll();
 
-    // Convenience wrapper that draws shell + an empty placeholder body.
     void RenderShell(ShellState& s, const char* window_title = "Password Manager");
 
     bool InputTextString(const char* label, std::string* str, ImGuiInputTextFlags flags = 0);
@@ -390,11 +342,9 @@ namespace ui
     // Password input that briefly reveals the last typed character (mobile-style)
     bool InputTextPasswordReveal(const char* label, std::string* str, ImGuiInputTextFlags extra_flags = 0, float reveal_duration_ms = 400.0f);
 
-    // Styled button matching card button visuals
     bool StyledButton(const char* id, const char* label, ImVec2 size = ImVec2(0, 0), float rounding = -1.0f);
     bool StyledButtonLight(const char* id, const char* label, ImVec2 size = ImVec2(0, 0), float rounding = -1.0f);
 
-    // Animated dropdown with dot indicator
     bool AnimatedComboDot(const char* id, const char* preview_value, const char* const* items, int items_count, int* current_index, float width, float height, bool light = false);
 
     // Search popup animation
@@ -404,14 +354,12 @@ namespace ui
         float w = 0.0f;
     };
 
-    // Returns true if filter text changed this frame.
     bool SearchIconPopup(const char* id,
         ImGuiTextFilter& filter,
         SearchPopupAnim& anim,
         float targetWidth = 160.0f,
         float height = 30.0f);
 
-    // Underline tabs
     enum class UnderlineTabMode : int { Pinned = 0, Favorites = 1, All = 2 };
 
     struct UnderlineTabsAnim
@@ -421,7 +369,6 @@ namespace ui
         bool  init = false;
     };
 
-    // Returns true if activeIndex changed
     bool UnderlineTabs(const char* id,
         const char* const* labels, int labelCount,
         int& activeIndex,
@@ -441,10 +388,6 @@ namespace ui
         bool& show_password,
         helpers::GenOptions& gen_opt,
         float width);
-
-    // ============================================================
-// Accordion list (generic; UI does NOT know Credential)
-// ============================================================
 
     struct PwHistoryEntry {
         std::string password;
@@ -521,10 +464,10 @@ namespace ui
 
         bool is_pinned = false;
         bool is_favorite = false;
-        int64_t expires_at_ms = 0;  // 0=none, >0=active timer, <0=expired+flagged
+        int64_t expires_at_ms = 0;  // 0=none, >0=countdown, <0=expired+flagged
         int     expiry_action = 0;  // 0=auto-trash, 1=flag only
-        int64_t created_at_ms = 0;  // pass-through (display only, Unix ms UTC)
-        int64_t updated_at_ms = 0;  // pass-through (display only, Unix ms UTC)
+        int64_t created_at_ms = 0;  // display only (Unix ms UTC)
+        int64_t updated_at_ms = 0;  // display only (Unix ms UTC)
         bool        is_header = false;
         std::string header_label;     // e.g. "December 2025"
 
@@ -538,19 +481,16 @@ namespace ui
     {
         int delete_id = -1;
         int edit_commit_id = -1;
-        int edit_open_id = -1;  // ID of Credential to open in edit page
-        int toggle_pin_id = -1;  // ID of Credential to toggle pin
-        int toggle_fav_id = -1;  // ID of Credential to toggle favorite
+        int edit_open_id = -1;
+        int toggle_pin_id = -1;
+        int toggle_fav_id = -1;
 
         AccordionItem edited{};
         std::string edited_password{};
     };
 
-    // App provides password only when editing (optional).
-    // Return nullptr or "" if you don't want password editable.
-    using GetPasswordFn = const char* (*)(int id);
+    using GetPasswordFn = const char* (*)(int id);  // return nullptr/"" to disable password editing
 
-    // Render the accordion list (returns one action per frame max)
     AccordionListResult RenderAccordionList(
         const std::vector<AccordionItem>& items,
         uint32_t activeVaultKey,
@@ -559,62 +499,33 @@ namespace ui
         ViewMode view_mode
     );
 
-    // ============================================================
-    // Toast notifications
-    // ============================================================
     enum class ToastType { Success, Error, Info };
 
     void ShowToast(const char* message, ToastType type = ToastType::Success, float duration = 2.5f);
-    void RenderToasts(); // Call once per frame, draws all active toasts
+    void RenderToasts();
 
-    // ============================================================
-    // Clipboard auto-clear (security)
-    // ============================================================
-    void ClipboardCopyPassword(const char* password); // Copy + schedule auto-clear
-    void TickClipboardClear(); // Call once per frame
+    void ClipboardCopyPassword(const char* password); // copies + schedules auto-clear
+    void TickClipboardClear();
 
-    // ============================================================
-    // Master re-prompt (security)
-    // ============================================================
     enum class RepromptAction { None, RevealPassword, RevealNotes, Export, DisableReadOnly, DisableSecuritySetting };
 
-    // Call to request re-prompt before action. Returns true if no re-prompt needed.
-    // If re-prompt needed, opens modal and stores pending action.
+    // returns true immediately if no re-prompt needed; otherwise opens modal
     bool RequestReprompt(RepromptAction action, const std::string& master_password);
-
-    // Check if action was approved after re-prompt
     bool IsRepromptApproved(RepromptAction action);
-
-    // Clear approved state (call after using the approval)
-    void ClearRepromptApproval(RepromptAction action);
-
-    // Render the re-prompt modal (call once per frame)
+    void ClearRepromptApproval(RepromptAction action);  // call after consuming approval
     void RenderRepromptModal();
 
-    // Render trash bin modal (call once per frame)
     void RenderTrashModal(ShellState& s);
-
-    // Render security center modal (call once per frame)
     void RenderSecurityCenterModal(ShellState& s);
-
-    // Render recovery key display modal (call once per frame)
     void RenderRecoveryKeyModal(ShellState& s);
-
-    // Render settings modal (call once per frame)
     void RenderSettingsPage(ShellState& s);
 
-    // On-screen keyboard
     extern bool g_show_osk;
-    void OskPreFrame();              // Call BEFORE any widgets each frame
-    void RenderOnScreenKeyboard();   // Call at end of frame to draw overlay
+    void OskPreFrame();              // call before any widgets
+    void RenderOnScreenKeyboard();   // call at end of frame
 
-    // Check if locked out due to failed attempts
     bool IsRepromptLockedOut();
-
-    // Reset lockout (e.g., after vault lock/unlock)
-    void ResetRepromptLockout();
-
-    // Set master password for re-prompt verification (call from app when vault unlocks)
+    void ResetRepromptLockout();     // call after vault lock/unlock
     void SetRepromptMasterPassword(const std::string& password);
 
 }
