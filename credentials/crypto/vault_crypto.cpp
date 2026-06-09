@@ -1,5 +1,6 @@
 // vault_crypto.cpp
-// Per-Credential encryption for SQLite storage
+// Per-credential encryption for the vault. XChaCha20-Poly1305 with an
+// Argon2id-derived key; the credential UUID is bound in as AAD.
 
 #include "vault_crypto.h"
 
@@ -11,15 +12,11 @@
 
 namespace enc {
 
-    // Constants
     static constexpr size_t kSaltLen = crypto_pwhash_SALTBYTES;           // 16 bytes
     static constexpr size_t kKeyLen = crypto_aead_xchacha20poly1305_ietf_KEYBYTES;   // 32 bytes
     static constexpr size_t kNonceLen = crypto_aead_xchacha20poly1305_ietf_NPUBBYTES; // 24 bytes
     static constexpr size_t kTagLen = crypto_aead_xchacha20poly1305_ietf_ABYTES;     // 16 bytes
 
-    // ============================================================
-    // Key derivation (Argon2id)
-    // ============================================================
     std::vector<uint8_t> derive_master_key(const std::string& password, const std::vector<uint8_t>& salt, bool high_security)
     {
         if (password.empty() || salt.size() != kSaltLen)
@@ -27,8 +24,8 @@ namespace enc {
 
         std::vector<uint8_t> key(kKeyLen);
 
-        // High security: SENSITIVE params (4 iterations / 1 GB RAM)
-        // Default: MODERATE params (3 iterations / 256 MB RAM)
+        // high_security bumps Argon2 to SENSITIVE (4 passes / 1 GiB) vs the
+        // default MODERATE (3 passes / 256 MiB)
         unsigned long long opslimit = high_security
             ? crypto_pwhash_OPSLIMIT_SENSITIVE
             : crypto_pwhash_OPSLIMIT_MODERATE;
@@ -53,9 +50,6 @@ namespace enc {
         return key;
     }
 
-    // ============================================================
-    // Salt generation
-    // ============================================================
     std::vector<uint8_t> generate_salt()
     {
         std::vector<uint8_t> salt(kSaltLen);
@@ -63,10 +57,9 @@ namespace enc {
         return salt;
     }
 
-    // ============================================================
-    // AAD-bound encryption (UUID as AAD)
-    // Binds ciphertext to Credential UUID to prevent blob-swapping attacks
-    // ============================================================
+    // Output blob is laid out as nonce | ciphertext | tag. The UUID goes in as
+    // AAD so a blob can't be lifted from one credential and replayed into
+    // another (the tag won't verify against a different UUID).
     std::vector<uint8_t> encrypt_credential(
         const std::string& plaintext,
         const std::vector<uint8_t>& master_key,
@@ -75,18 +68,13 @@ namespace enc {
         if (master_key.size() != kKeyLen)
             return {};
 
-        // Generate random nonce
         std::vector<uint8_t> nonce(kNonceLen);
         randombytes_buf(nonce.data(), kNonceLen);
 
-        // Allocate output: nonce + ciphertext + tag
         const size_t ct_len = plaintext.size() + kTagLen;
         std::vector<uint8_t> blob(kNonceLen + ct_len);
-
-        // Copy nonce to beginning
         std::memcpy(blob.data(), nonce.data(), kNonceLen);
 
-        // Encrypt with UUID as AAD
         unsigned long long actual_ct_len = 0;
         int rc = crypto_aead_xchacha20poly1305_ietf_encrypt(
             blob.data() + kNonceLen, &actual_ct_len,
@@ -104,9 +92,6 @@ namespace enc {
         return blob;
     }
 
-    // ============================================================
-    // AAD-bound decryption (UUID as AAD)
-    // ============================================================
     std::string decrypt_credential(
         const std::vector<uint8_t>& blob,
         const std::vector<uint8_t>& master_key,
@@ -115,15 +100,13 @@ namespace enc {
         if (master_key.size() != kKeyLen)
             return "";
 
-        // Minimum size: nonce + tag
-        if (blob.size() < kNonceLen + kTagLen)
+        if (blob.size() < kNonceLen + kTagLen)  // too small to even hold nonce+tag
             return "";
 
         const uint8_t* nonce = blob.data();
         const uint8_t* ct_with_tag = blob.data() + kNonceLen;
         const size_t ct_with_tag_len = blob.size() - kNonceLen;
 
-        // Allocate plaintext buffer
         const size_t pt_len = ct_with_tag_len - kTagLen;
         std::vector<uint8_t> pt(pt_len);
 
@@ -148,9 +131,7 @@ namespace enc {
         return result;
     }
 
-    // ============================================================
-    // Legacy encryption (no AAD) - for migration only
-    // ============================================================
+    // Pre-AAD format, kept only so old vaults can still be read/migrated.
     std::vector<uint8_t> encrypt_credential_legacy(
         const std::string& plaintext,
         const std::vector<uint8_t>& master_key)
@@ -158,18 +139,13 @@ namespace enc {
         if (master_key.size() != kKeyLen)
             return {};
 
-        // Generate random nonce
         std::vector<uint8_t> nonce(kNonceLen);
         randombytes_buf(nonce.data(), kNonceLen);
 
-        // Allocate output: nonce + ciphertext + tag
         const size_t ct_len = plaintext.size() + kTagLen;
         std::vector<uint8_t> blob(kNonceLen + ct_len);
-
-        // Copy nonce to beginning
         std::memcpy(blob.data(), nonce.data(), kNonceLen);
 
-        // Encrypt without AAD
         unsigned long long actual_ct_len = 0;
         int rc = crypto_aead_xchacha20poly1305_ietf_encrypt(
             blob.data() + kNonceLen, &actual_ct_len,
@@ -187,9 +163,6 @@ namespace enc {
         return blob;
     }
 
-    // ============================================================
-    // Legacy decryption (no AAD) - for migration only
-    // ============================================================
     std::string decrypt_credential_legacy(
         const std::vector<uint8_t>& blob,
         const std::vector<uint8_t>& master_key)
@@ -197,15 +170,13 @@ namespace enc {
         if (master_key.size() != kKeyLen)
             return "";
 
-        // Minimum size: nonce + tag
-        if (blob.size() < kNonceLen + kTagLen)
+        if (blob.size() < kNonceLen + kTagLen)  // too small to even hold nonce+tag
             return "";
 
         const uint8_t* nonce = blob.data();
         const uint8_t* ct_with_tag = blob.data() + kNonceLen;
         const size_t ct_with_tag_len = blob.size() - kNonceLen;
 
-        // Allocate plaintext buffer
         const size_t pt_len = ct_with_tag_len - kTagLen;
         std::vector<uint8_t> pt(pt_len);
 
@@ -230,9 +201,6 @@ namespace enc {
         return result;
     }
 
-    // ============================================================
-    // Secure memory clearing
-    // ============================================================
     void secure_zero(std::vector<uint8_t>& data)
     {
         if (!data.empty())

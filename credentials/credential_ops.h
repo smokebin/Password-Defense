@@ -1,6 +1,4 @@
-// credential_ops.h
-// High-level Credential operations (encrypt/decrypt + database)
-// Works with decrypted Credential structs
+// credential_ops.h — encrypt/decrypt + DB; works with plain Credential structs
 
 #pragma once
 
@@ -10,56 +8,32 @@
 
 namespace cred_ops {
 
-    // ============================================================
-    // Load/Save operations
-    // ============================================================
-
-    // Load all credentials from SQLite (decrypted into memory)
-    // Returns empty vector on failure (wrong key, db not open, etc.)
+    // empty vector on wrong key / db not open
     std::vector<Credential> load_all(const std::vector<uint8_t>& master_key);
-
-    // Load deleted (trash) credentials from SQLite (decrypted for trash UI)
     std::vector<Credential> load_deleted(const std::vector<uint8_t>& master_key);
 
-    // ============================================================
-    // CRUD operations
-    // ============================================================
-
-    // Add new Credential (generates UUID, encrypts, stores)
-    // Returns the assigned UUID, or empty string on failure
+    // returns assigned UUID, or "" on failure
     std::string add(const Credential& c, const std::vector<uint8_t>& master_key);
-
-    // Update existing Credential by UUID
     bool update(const std::string& uuid, const Credential& c, const std::vector<uint8_t>& master_key);
 
-    // Encrypt a credential (for save_vault_to_disk — preserves timestamps)
+    // exposed for save_vault_to_disk (preserves caller-supplied timestamps)
     std::vector<uint8_t> encrypt_cred_public(const Credential& c, const std::vector<uint8_t>& key, const std::string& uuid);
 
-    // Delete Credential by UUID (soft delete for sync)
-    bool remove(const std::string& uuid);
+    bool remove(const std::string& uuid);           // soft delete
+    bool remove_permanent(const std::string& uuid); // hard delete after sync confirmation
 
-    // Hard delete (after sync confirmation)
-    bool remove_permanent(const std::string& uuid);
-
-    // ============================================================
-    // Batch operations
-    // ============================================================
-
-    // Import multiple credentials (used during migration)
-    // Generates UUIDs for credentials without them
+    // Preserves uuid if set (CSV imports get fresh UUIDs; .pwmngr round-trips keep theirs).
+    // newer-wins upsert under the hood; counts split by outcome for the import toast.
     bool import_credentials(
         const std::vector<Credential>& creds,
-        const std::vector<uint8_t>& master_key
+        const std::vector<uint8_t>& master_key,
+        int* out_inserted = nullptr,
+        int* out_updated  = nullptr,
+        int* out_skipped  = nullptr,
+        std::string* out_error = nullptr
     );
 
-    // ============================================================
-    // Utility
-    // ============================================================
-
-    // Check if vault has any local changes pending sync
     bool has_pending_changes();
-
-    // Get count of credentials
-    int count();
+    int  count();
 
 }

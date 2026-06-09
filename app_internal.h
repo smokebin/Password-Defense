@@ -1,6 +1,4 @@
-// app_internal.h
-// Shared declarations for application translation units.
-// Included by application.cpp (core) and app_import_export.cpp.
+// app_internal.h — shared declarations for application.cpp and app_import_export.cpp
 #pragma once
 
 #include "credentials/credential.h"
@@ -11,9 +9,7 @@
 #include <set>
 #include <unordered_map>
 
-// ============================================================
-// Import/Export helpers (defined in app_import_export.cpp)
-// ============================================================
+// import/export (app_import_export.cpp)
 
 std::string serialize_creds_json(const std::vector<Credential>& creds);
 std::vector<Credential> deserialize_creds_json(const std::string& json_str);
@@ -32,15 +28,14 @@ const char* CsvFormatName(CsvFormat f);
 struct CsvImportResult {
     std::vector<Credential> creds;
     CsvFormat format = CsvFormat::Unknown;
-    int skipped = 0;
+    int skipped = 0;     // entirely empty rows
+    int short_rows = 0;  // rows with fewer fields than the header (partial creds)
     std::string error;
 };
 
 CsvImportResult parse_csv_import(const std::string& file_content);
 
-// ============================================================
-// Display helpers (defined in app_display_helpers.cpp)
-// ============================================================
+// display helpers (app_display_helpers.cpp)
 
 namespace ui { struct AccordionItem; }
 

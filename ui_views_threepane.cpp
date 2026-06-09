@@ -23,7 +23,6 @@ namespace ui
         float centerW = fullW;
         float sbContentRight = 0.0f; // updated after scroll child begins
 
-        // Use unfiltered counts from ShellState (populated in application.cpp)
         const int countAll       = s.sb_count_all;
         const int countPinned    = s.sb_count_pinned;
         const int countFav       = s.sb_count_favorites;
@@ -32,7 +31,6 @@ namespace ui
         const int countIdentity  = s.sb_count_identity;
         const int countNotes     = s.sb_count_notes;
         const auto& groupCounts  = s.sb_group_counts;
-        // Map pill tab labels to counts
         auto GetPillCount = [&](const std::string& label) -> int {
             if (label == "Pinned") return countPinned;
             if (label == "Favorites") return countFav;
@@ -41,18 +39,15 @@ namespace ui
             return git != groupCounts.end() ? git->second : 0;
         };
 
-        // Suppress selectable highlight — no hover/active/selected background
         const ImVec4 transparent(0, 0, 0, 0);
         ImGui::PushStyleColor(ImGuiCol_Header,        transparent);
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered,  transparent);
         ImGui::PushStyleColor(ImGuiCol_HeaderActive,   transparent);
 
-        // Taller selectables with vertically centered text
         const float rowH = 20.0f;
         const float sbPad = 17.0f;
         ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
 
-        // Toggle button + heading
         {
             if (!collapsed) ImGui::Indent(sbPad - 2.0f);
             const char* toggleIcon = collapsed ? ICON_MDI_CHEVRON_RIGHT : ICON_MDI_CHEVRON_LEFT;
@@ -132,10 +127,8 @@ namespace ui
 
         if (collapsed)
         {
-            // ---- COLLAPSED MODE: icon-only strip ----
             ImDrawList* dl = ImGui::GetWindowDrawList();
 
-            // Filters (icon-only, centered) — sync with pill tab labels
             const char* pico0 = nullptr; const char* pico0a = nullptr;
             const char* pico1 = nullptr; const char* pico1a = nullptr;
             GetPillTabIcons(s.pill_tab_0, pico0, pico0a);
@@ -382,13 +375,11 @@ namespace ui
                 ImGui::PopStyleColor(5);
             } // end if (!s.sidebar_groups_collapsed)
 
-            // --- TAGS section (collapsed sidebar) ---
             if (!s.all_tags.empty())
             {
                 ImGui::Spacing();
                 //ImGui::Spacing();
 
-                // Tags section header (chevron centered)
                 {
                     const char* chevron = s.sidebar_tags_collapsed ? ICON_MDI_CHEVRON_RIGHT : ICON_MDI_CHEVRON_DOWN;
                     ImVec2 icoSz = ImGui::CalcTextSize(chevron);
@@ -461,10 +452,8 @@ namespace ui
         }
         else
         {
-            // ---- EXPANDED MODE (existing code) ----
             ImGui::Indent(sbPad);
 
-            // Sidebar icon colors
             const ImU32 sbIcoPin    = sbIcoGray;
             const ImU32 sbIcoHeart  = sbIcoGray;
             const ImU32 sbIcoKey    = sbIcoGray;
@@ -474,8 +463,7 @@ namespace ui
             const ImU32 sbIcoFolder = sbIcoGray;
             const ImU32 sbIcoTag    = sbIcoGray;
 
-            // Helper: draw a sidebar row with colored icon + text (no Selectable, avoids double-draw)
-            // Returns true if clicked.
+            // InvisibleButton rather than Selectable — avoids double-draw of background tint
             auto DrawSbRow = [&](const char* id, const char* label, ImU32 icoCol, bool hoverAccent) -> bool {
                 ImVec2 selPos = ImGui::GetCursorScreenPos();
                 bool hov = ImGui::IsMouseHoveringRect(selPos, ImVec2(selPos.x + fullW, selPos.y + rowH));
@@ -507,7 +495,6 @@ namespace ui
                 return 0;
             };
 
-            // --- High-level filters (sync with pill tab labels) ---
             const char* eIco0 = nullptr; const char* eIco0a = nullptr;
             const char* eIco1 = nullptr; const char* eIco1a = nullptr;
             GetPillTabIcons(s.pill_tab_0, eIco0, eIco0a);
@@ -615,7 +602,6 @@ namespace ui
             ImGui::Spacing();
             //ImGui::Spacing();
 
-            // --- TYPES section header (collapsible) ---
             {
                 const char* chevron = s.sidebar_types_collapsed ? ICON_MDI_CHEVRON_RIGHT : ICON_MDI_CHEVRON_DOWN;
                 ImGui::PushFont(render::FontSmall);
@@ -630,7 +616,6 @@ namespace ui
 
             if (!s.sidebar_types_collapsed)
             {
-                // Check if any type filter is active
                 bool anyTypeActive = false;
                 for (const auto& key : s.selected_groups)
                     if (!key.empty() && key[0] == '@') { anyTypeActive = true; break; }
@@ -731,7 +716,6 @@ namespace ui
             ImGui::Spacing();
             ImGui::Spacing();
 
-            // --- GROUPS section header (collapsible) ---
             {
                 const char* chevron = s.sidebar_groups_collapsed ? ICON_MDI_CHEVRON_RIGHT : ICON_MDI_CHEVRON_DOWN;
                 ImGui::PushFont(render::FontSmall);
@@ -746,8 +730,6 @@ namespace ui
 
             if (!s.sidebar_groups_collapsed)
             {
-
-                // Check if any user group filter is active
                 bool anyGroupActive = false;
                 for (const auto& key : s.selected_groups)
                     if (key.empty() || key[0] != '@') { anyGroupActive = true; break; }
@@ -910,7 +892,6 @@ namespace ui
                                 }
                                 ImGui::PopStyleColor();
 
-                                // Draw favicon + title
                                 {
                                     ImDrawList* cdl = ImGui::GetWindowDrawList();
                                     float iconX = selPos.x + 4.0f;
@@ -987,7 +968,6 @@ namespace ui
             }
             ImGui::Unindent(sbPad);
 
-            // --- TAGS section header (collapsible) ---
             if (!s.all_tags.empty())
             {
                 ImGui::Spacing();
@@ -1197,7 +1177,6 @@ namespace ui
         float fullW = ImGui::GetContentRegionAvail().x;
         const float toggleCenterW = collapsed ? 56.0f : fullW; // fixed centering during animation
 
-        // Toggle button + heading
         {
             const float mlPad = 17.0f;
             const char* toggleIcon = collapsed ? ICON_MDI_CHEVRON_RIGHT : ICON_MDI_CHEVRON_LEFT;
@@ -1324,9 +1303,8 @@ namespace ui
 
         if (collapsed)
         {
-            // ---- COLLAPSED MODE: favicon/icon strip ----
             const float iconW = fullW;
-            const float centerW = iconW; // center icons within available width
+            const float centerW = iconW;
             const float icoSz = 24.0f;
             const float rowH = 38.0f;
 
@@ -1334,8 +1312,7 @@ namespace ui
             {
                 if (it.is_header)
                 {
-                    // Compact group separator: first letter in parens, centered
-                    // e.g. "December 2025" → "(D)", "Banking" → "(B)", "A" → "(A)"
+                    // collapsed: show first letter of group header as a centered badge
                     char badge[8];
                     if (!it.header_label.empty())
                         snprintf(badge, sizeof(badge), "%c", it.header_label[0]);
@@ -1403,7 +1380,6 @@ namespace ui
                     SetTooltipPadded("%s", it.title.c_str());
                 }
 
-                // Draw favicon or type icon centered in row
                 {
                     ImDrawList* dl = ImGui::GetWindowDrawList();
                     auto srv = favicon::Get(it.website);
@@ -1458,7 +1434,6 @@ namespace ui
         }
         else
         {
-            // ---- EXPANDED MODE (existing code) ----
             ImGui::Indent(8.0f);
 
             bool tpSkipUntilNextHeader = false;
@@ -1482,7 +1457,6 @@ namespace ui
                         hdrCollapsed = !hdrCollapsed;
                     }
                     ImGui::PopStyleColor();
-                    // Draw chevron on far right
                     ImVec2 chevSz = ImGui::CalcTextSize(chevron);
                     ImVec2 rMin = ImGui::GetItemRectMin();
                     ImVec2 rMax = ImGui::GetItemRectMax();
@@ -1501,7 +1475,6 @@ namespace ui
 
                 bool selected = (s.three_pane_selected_id == it.id);
 
-                // Build subtitle based on type + per-type toggles
                 const auto& cols = s.detailed_header_cols;
                 std::string subtitle;
                 switch (it.type)
@@ -1581,7 +1554,7 @@ namespace ui
 
                 bool hovered_exp = ImGui::IsItemHovered();
 
-                // Draw favicon + vertically centered title/subtitle via DrawList
+                // title + subtitle drawn manually so we can vertically center the two-line block
                 {
                     ImDrawList* fdl = ImGui::GetWindowDrawList();
                     ImVec2 rMin = ImGui::GetItemRectMin();
@@ -1591,18 +1564,15 @@ namespace ui
                     const float rowH = 38.0f;
                     const float gap = 2.0f;
 
-                    // Compute total text block height and center it
                     float blockH = regSz + (subtitle.empty() ? 0.0f : gap + subSz);
                     float blockY = rMin.y + (rowH - blockH) * 0.5f + 2.0f;
 
-                    // Title (overwrite selectable's own text rendering with centered version)
                     {
                         const char* titleText = cols.title ? it.title.c_str() : "";
                         ImVec2 titlePos(textX, blockY);
                         fdl->AddText(render::FontBold, regSz, titlePos, ImGui::GetColorU32(ImGuiCol_Text), titleText);
                     }
 
-                    // Subtitle (brighter when selected)
                     if (!subtitle.empty())
                     {
                         ImU32 subCol = selected
@@ -1612,7 +1582,6 @@ namespace ui
                             ImVec2(textX, blockY + regSz + gap), subCol, subtitle.c_str());
                     }
 
-                    // Favicon or type icon fallback
                     const float icoSz = 24.0f;
 
                     if (srv)
@@ -1678,7 +1647,6 @@ namespace ui
                         (it.changed_fields & FCF_IsNew) ? kNewRowTint : kChangedRowTint);
                 }
 
-                // Draw pin/fav + security icons on the right side of the selectable row
                 {
                     ImVec2 rMin = ImGui::GetItemRectMin();
                     ImVec2 rMax = ImGui::GetItemRectMax();
@@ -1912,7 +1880,7 @@ namespace ui
                     ImGui::TextUnformatted(header);
                     ImGui::PopStyleColor();
 
-                    // Render each reused credential as a flow-wrapped clickable link list
+                    // flow-wrap clickable links for each reused credential
                     bool dk = IsDarkTheme();
                     ImU32 linkCol     = dk ? colors::LinkMutedLight : colors::LinkMuted;
                     ImU32 linkHoverCol = dk ? colors::LinkNormalLight : colors::LinkNormal;
@@ -2081,19 +2049,15 @@ namespace ui
         ImGui::BeginChild("##3p_detail_scroll", ImVec2(0, -bottomBarH), ImGuiChildFlags_None);
         ImGui::PopStyleColor(4);
 
-        // --- Header: favicon + title + type subtitle ---
         ImVec2 headerMin;
         {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             const float headerH = 48.0f;
             headerMin = ImGui::GetCursorScreenPos();
-
-            // Reserve header space
             ImGui::Dummy(ImVec2(0, headerH));
 
             float textX = headerMin.x;
 
-            // Favicon or type icon
             auto srv = favicon::Get(c.website);
             const float faviconSz = 28.0f;
             if (srv)
@@ -2113,7 +2077,6 @@ namespace ui
                 textX += icoSz.x + 10.0f;
             }
 
-            // Two-line: title + type label
             float titleFontSz = render::FontBold ? render::FontBold->LegacySize : ImGui::GetTextLineHeight();
             float subFontSz   = render::FontSmall ? render::FontSmall->LegacySize : ImGui::GetTextLineHeight();
             const char* subText = CredTypeLabel(c.type);
@@ -2122,7 +2085,6 @@ namespace ui
             float blockH = titleFontSz + gap + subFontSz;
             float blockY = headerMin.y + (headerH - blockH) * 0.5f;
 
-            // Clip title to available width
             float maxTitleW = ImGui::GetContentRegionAvail().x - textX + headerMin.x - 10.0f;
             dl->PushClipRect(ImVec2(textX, blockY), ImVec2(textX + maxTitleW, blockY + titleFontSz + 1.0f), true);
             dl->AddText(render::FontBold, titleFontSz,
@@ -2139,11 +2101,9 @@ namespace ui
         ImGui::Spacing();
         ImGui::Spacing();
 
-        // --- Type-conditional rows (reuse existing Draw* helpers) ---
         static std::set<int> visiblePasswordsThreePane;
         const bool isNew = !!(c.changed_fields & FCF_IsNew);
 
-        // Shared container constants for all credential types
         const float cGap = 10.0f, cBoxPad = 10.0f;
         const bool dark = IsDarkTheme();
         ImU32 cDivCol = dark ? IM_COL32(255, 255, 255, 12) : IM_COL32(0, 0, 0, 12);
@@ -2154,7 +2114,6 @@ namespace ui
             ImGui::Dummy(ImVec2(0, 2.0f));
         };
 
-        // Set lifted child colors for all containers
         LiftedChildColorSet liftedColors;
         liftedColors.bg          = dark ? theme::CardSurface.dark  : theme::CardSurface.light;
         liftedColors.borderOuter = dark ? theme::CardBorderOuter.dark      : theme::CardBorderOuter.light;
@@ -2163,7 +2122,6 @@ namespace ui
 
         if (c.type == CredType::Password)
         {
-            // --- About container (website + group + timestamps) ---
             {
                 ImGui::PushFont(render::FontSmall);
                 ImGui::TextDisabled("About");
@@ -2185,7 +2143,6 @@ namespace ui
                     }
                     g_field_accent_active = false;
 
-                    // Timestamps inside About
                     if (c.created_at_ms != 0 || c.updated_at_ms != 0)
                     {
                         bool anyCollapsed = s.three_pane_sidebar_collapsed || s.three_pane_list_collapsed;
@@ -2214,7 +2171,6 @@ namespace ui
 
             ImGui::Dummy(ImVec2(0, cGap));
 
-            // --- Account container (user + email + password + TOTP) ---
             {
                 ImGui::PushFont(render::FontSmall);
                 ImGui::TextDisabled("Account");
@@ -2248,7 +2204,6 @@ namespace ui
         }
         else if (c.type == CredType::CreditCard)
         {
-            // --- Card Details container ---
             {
                 ImGui::PushFont(render::FontSmall);
                 ImGui::TextDisabled("Card Details");
@@ -2279,7 +2234,6 @@ namespace ui
 
             ImGui::Dummy(ImVec2(0, cGap));
 
-            // --- Account container (cardholder) ---
             {
                 ImGui::PushFont(render::FontSmall);
                 ImGui::TextDisabled("Account");
@@ -2325,7 +2279,6 @@ namespace ui
 
             ImGui::Dummy(ImVec2(0, cGap));
 
-            // --- About container (website + group + timestamps) ---
             {
                 ImGui::PushFont(render::FontSmall);
                 ImGui::TextDisabled("About");
@@ -2389,7 +2342,6 @@ namespace ui
         }
         g_field_accent_active = false;
 
-        // Group row (types that don't have their own About container)
         if (c.type != CredType::Password && c.type != CredType::CreditCard && !c.group.empty())
         {
             g_field_accent_active = isNew || !!(c.changed_fields & FCF_Group);
@@ -2415,7 +2367,6 @@ namespace ui
 
                 if (!hasNotes && activeTab == 1) activeTab = 0;
 
-                // Draw split-pill tab bar
                 {
                     const bool dark = IsDarkTheme();
                     const float tabH = 28.0f;
@@ -2430,7 +2381,6 @@ namespace ui
                     const ImU32 divCol   = dark ? theme::PillDivider.dark  : theme::PillDivider.light;
                     ImDrawList* dl = ImGui::GetWindowDrawList();
 
-                    // Build tab entries
                     struct TabEntry { const char* id; const char* icon; const char* label; int idx; };
                     TabEntry tabs[2];
                     int numTabs = 0;
@@ -2439,7 +2389,6 @@ namespace ui
                     if (hasNotes)
                         tabs[numTabs++] = { "##tab_notes", ICON_MDI_NOTE_TEXT, "Notes", 1 };
 
-                    // Measure regions
                     float regionW[2] = {};
                     for (int i = 0; i < numTabs; i++)
                     {
@@ -2464,7 +2413,6 @@ namespace ui
                         ImVec2(pillPos.x + totalW, pillPos.y + tabH),
                         pillBg, rounding);
 
-                    // Draw each region
                     float curX = pillPos.x;
                     for (int i = 0; i < numTabs; i++)
                     {
@@ -2473,14 +2421,12 @@ namespace ui
                         ImVec2 rMin(curX, pillPos.y);
                         ImVec2 rMax(curX + w, pillPos.y + tabH);
 
-                        // Hit test
                         ImGui::SetCursorScreenPos(rMin);
                         ImGui::InvisibleButton(tabs[i].id, ImVec2(w, tabH));
                         bool hov = ImGui::IsItemHovered();
                         if (ImGui::IsItemClicked())
                             activeTab = tabs[i].idx;
 
-                        // Hover highlight
                         {
                             ImDrawFlags rndFlags = 0;
                             if (i == 0) rndFlags = ImDrawFlags_RoundCornersLeft;
@@ -2642,7 +2588,6 @@ namespace ui
         ImGui::EndChild(); // ##3p_detail_scroll
         // DrawScrollTopFade(dtScrollMin, dtScrollW, dtScrollY, -2.0f);
 
-        // --- Sticky action bar ---
         //ImGui::Separator();
         ImGui::Spacing();
         {
@@ -2686,7 +2631,7 @@ namespace ui
         auto& s = *g_shell_ptr;
         const float dt = ImGui::GetIO().DeltaTime;
 
-        // --- Auto-collapse: compute effective collapsed state ---
+        // auto-collapse: compute effective state (hover-expanded overrides base collapsed)
         const bool sb_base_collapsed = s.three_pane_sidebar_collapsed;
         const bool ml_base_collapsed = s.three_pane_list_collapsed;
 
@@ -2698,7 +2643,6 @@ namespace ui
         s.three_pane_sidebar_collapsed = sb_effective;
         s.three_pane_list_collapsed    = ml_effective;
 
-        // --- Animate pane widths ---
         const float sbTargetW = sb_effective ? 50.0f : 170.0f;
         const float mlTargetW = ml_effective ? 72.0f : 280.0f;
 
@@ -2712,7 +2656,6 @@ namespace ui
         if (g_3p_list_anim_w < mlTargetW)          g_3p_list_anim_w = ImMin(g_3p_list_anim_w + stepML, mlTargetW);
         else if (g_3p_list_anim_w > mlTargetW)     g_3p_list_anim_w = ImMax(g_3p_list_anim_w - stepML, mlTargetW);
 
-        // --- Render three columns ---
         RenderThreePaneSidebar(s, g_3p_sidebar_anim_w, items);
         ImVec2 sbMin = ImGui::GetItemRectMin();
         ImVec2 sbMax = ImGui::GetItemRectMax();
@@ -2725,16 +2668,13 @@ namespace ui
         ImGui::SameLine(0, 0);
         RenderThreePaneDetailPane(items, s, activeVaultKey, get_password_fn, read_only, out);
 
-        // Vertical divider lines between panes
         {
             ImDrawList* dl = ImGui::GetWindowDrawList();
             ImU32 lineCol = ImGui::GetColorU32(ImGuiCol_Separator, 0.4f);
-
-            // Between middle list and detail pane
             dl->AddLine(ImVec2(mlMax.x, mlMin.y), ImVec2(mlMax.x, mlMax.y), lineCol, 1.0f);
         }
 
-        // Vertical shadow on left edge of detail pane
+        // left + bottom edge shadow on detail pane
         {
             ImVec2 dMin = ImGui::GetItemRectMin();
             ImVec2 dMax = ImGui::GetItemRectMax();
@@ -2742,13 +2682,10 @@ namespace ui
             const float shadowW = 10.0f;
             ImU32 shadowCol = IsDarkTheme() ? IM_COL32(0, 0, 0, 50) : IM_COL32(0, 0, 0, 12);
             ImU32 clear = IM_COL32(0, 0, 0, 0);
-            // Left edge shadow
             dl->AddRectFilledMultiColor(
                 ImVec2(dMin.x - shadowW, dMin.y),
                 ImVec2(dMin.x, dMax.y),
                 clear, shadowCol, shadowCol, clear);
-
-            // Bottom edge shadow (rendered inside, fading upward)
             dl->AddRectFilledMultiColor(
                 ImVec2(dMin.x, dMax.y - shadowW),
                 ImVec2(dMax.x, dMax.y),
@@ -2756,17 +2693,15 @@ namespace ui
         }
 
 
-        // --- Restore base collapsed state (only if toggle wasn't clicked) ---
+        // restore base collapsed state (only if the toggle wasn't clicked this frame)
         if (s.three_pane_sidebar_collapsed == sb_effective)
             s.three_pane_sidebar_collapsed = sb_base_collapsed;
         if (s.three_pane_list_collapsed == ml_effective)
             s.three_pane_list_collapsed = ml_base_collapsed;
 
-        // --- Hover detection for auto-collapse ---
         const bool anyPopupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
         const ImVec2 mouse = ImGui::GetIO().MousePos;
 
-        // Sidebar hover
         if (s.three_pane_sidebar_auto_collapse && s.three_pane_sidebar_collapsed)
         {
             bool hovered = (mouse.x >= sbMin.x && mouse.x <= sbMax.x &&
@@ -2792,7 +2727,6 @@ namespace ui
             g_3p_sidebar_leave_timer = 0.0f;
         }
 
-        // Middle list hover
         if (s.three_pane_list_auto_collapse && s.three_pane_list_collapsed)
         {
             bool hovered = (mouse.x >= mlMin.x && mouse.x <= mlMax.x &&

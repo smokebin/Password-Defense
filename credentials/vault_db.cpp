@@ -1,5 +1,4 @@
 // vault_db.cpp
-// SQLite-backed vault storage implementation
 
 #include "vault_db.h"
 #include "crypto/vault_crypto.h"
@@ -8,21 +7,15 @@
 #include <sqlite3.h>
 #define SODIUM_STATIC
 #include <sodium.h>
-// sqlite3.c compiled directly into project (no lib linking needed)
+// sqlite3.c compiled directly into the project
 
 #include <cstring>
 
 namespace vault_db {
 
-    // ============================================================
-    // Static state
-    // ============================================================
     static sqlite3* g_db = nullptr;
     static std::string g_db_path;
 
-    // ============================================================
-    // Internal helpers
-    // ============================================================
     static bool exec(const char* sql)
     {
         if (!g_db) return false;
@@ -35,7 +28,7 @@ namespace vault_db {
         return true;
     }
 
-    // Safe binding helpers (always use SQLITE_TRANSIENT for C++ strings/vectors)
+    // SQLITE_TRANSIENT copies the data before returning, safe for C++ temporaries
     static void bind_text(sqlite3_stmt* stmt, int idx, const std::string& val) {
         sqlite3_bind_text(stmt, idx, val.c_str(), static_cast<int>(val.size()), SQLITE_TRANSIENT);
     }
@@ -48,9 +41,6 @@ namespace vault_db {
         sqlite3_bind_int64(stmt, idx, val);
     }
 
-    // ============================================================
-    // Database lifecycle
-    // ============================================================
     bool init(const std::string& db_path)
     {
         if (g_db) close();
@@ -63,13 +53,12 @@ namespace vault_db {
 
         g_db_path = db_path;
 
-        // Enable WAL mode for better concurrency
         exec("PRAGMA journal_mode=WAL");
         exec("PRAGMA synchronous=FULL");
         exec("PRAGMA foreign_keys=ON");
         exec("PRAGMA secure_delete=ON");
 
-        // Create tables with per-Credential sync schema
+
         const char* schema = R"(
             CREATE TABLE IF NOT EXISTS pm_credentials (
                 uuid TEXT PRIMARY KEY,
@@ -123,6 +112,12 @@ namespace vault_db {
         }
     }
 
+    bool checkpoint_truncate()
+    {
+        if (!g_db) return false;
+        return exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    }
+
     bool exists(const std::string& db_path)
     {
         sqlite3* test_db = nullptr;
@@ -144,12 +139,7 @@ namespace vault_db {
         return g_db_path;
     }
 
-    // ============================================================
-    // Credential operations
-    // ============================================================
-
-    // Helper to populate CredentialRow from SQLite statement
-    // Expected column order: uuid, encrypted_blob, created_at_ms, updated_at_ms, deleted_at_ms, server_rev, is_dirty
+    // column order: uuid, encrypted_blob, created_at_ms, updated_at_ms, deleted_at_ms, server_rev, is_dirty
     static CredentialRow row_from_stmt(sqlite3_stmt* stmt)
     {
         CredentialRow row;
@@ -169,7 +159,7 @@ namespace vault_db {
         row.created_at_ms = sqlite3_column_int64(stmt, 2);
         row.updated_at_ms = sqlite3_column_int64(stmt, 3);
 
-        // deleted_at_ms: NULL becomes 0
+        // NULL → 0 (not deleted)
         if (sqlite3_column_type(stmt, 4) == SQLITE_NULL) {
             row.deleted_at_ms = 0;
         } else {
@@ -236,7 +226,6 @@ namespace vault_db {
         std::vector<CredentialRow> results;
         if (!g_db) return results;
 
-        // Get all dirty credentials (including tombstones for sync push)
         const char* sql = R"(
             SELECT uuid, encrypted_blob, created_at_ms, updated_at_ms, deleted_at_ms, server_rev, is_dirty
             FROM pm_credentials WHERE is_dirty = 1
@@ -260,7 +249,6 @@ namespace vault_db {
         std::vector<CredentialRow> results;
         if (!g_db) return results;
 
-        // Get tombstones (deleted_at_ms IS NOT NULL)
         const char* sql = R"(
             SELECT uuid, encrypted_blob, created_at_ms, updated_at_ms, deleted_at_ms, server_rev, is_dirty
             FROM pm_credentials WHERE deleted_at_ms IS NOT NULL
@@ -283,9 +271,13 @@ namespace vault_db {
         const std::string& uuid,
         const std::vector<uint8_t>& encrypted_blob,
         int64_t created_at_ms,
-        int64_t updated_at_ms)
+        int64_t updated_at_ms,
+        std::string* out_error)
     {
-        if (!g_db) return false;
+        if (!g_db) {
+            if (out_error) *out_error = "database not open";
+            return false;
+        }
 
         const char* sql = R"(
             INSERT INTO pm_credentials (uuid, encrypted_blob, created_at_ms, updated_at_ms, is_dirty)
@@ -294,6 +286,7 @@ namespace vault_db {
 
         sqlite3_stmt* stmt = nullptr;
         if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            if (out_error) *out_error = std::string("insert prepare failed: ") + sqlite3_errmsg(g_db);
             return false;
         }
 
@@ -302,9 +295,102 @@ namespace vault_db {
         bind_int64(stmt, 3, created_at_ms);
         bind_int64(stmt, 4, updated_at_ms);
 
-        bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+        int rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            if (out_error) {
+                int extended = sqlite3_extended_errcode(g_db);
+                if (rc == SQLITE_CONSTRAINT) {
+                    *out_error = std::string("uuid collision: ") + uuid + " (code " + std::to_string(extended) + ")";
+                } else {
+                    *out_error = std::string("insert step failed: ") + sqlite3_errmsg(g_db) +
+                                 " (code " + std::to_string(extended) + ")";
+                }
+            }
+            sqlite3_finalize(stmt);
+            return false;
+        }
+
         sqlite3_finalize(stmt);
-        return ok;
+        return true;
+    }
+
+    bool upsert_credential(
+        const std::string& uuid,
+        const std::vector<uint8_t>& encrypted_blob,
+        int64_t created_at_ms,
+        int64_t updated_at_ms,
+        UpsertOutcome* out_outcome,
+        std::string* out_error)
+    {
+        if (!g_db) {
+            if (out_error) *out_error = "database not open";
+            return false;
+        }
+
+        // pre-check needed: sqlite3_changes alone can't distinguish Inserted from Updated
+        bool existed = false;
+        {
+            sqlite3_stmt* check = nullptr;
+            const char* check_sql = "SELECT 1 FROM pm_credentials WHERE uuid = ?";
+            int prep = sqlite3_prepare_v2(g_db, check_sql, -1, &check, nullptr);
+            if (prep != SQLITE_OK) {
+                if (out_error) *out_error = std::string("upsert pre-check prepare failed: ") + sqlite3_errmsg(g_db);
+                return false;
+            }
+            bind_text(check, 1, uuid);
+            int rc = sqlite3_step(check);
+            sqlite3_finalize(check);
+            if (rc == SQLITE_ROW)        existed = true;
+            else if (rc == SQLITE_DONE)  existed = false;
+            else {
+                if (out_error) *out_error = std::string("upsert pre-check step failed: ") + sqlite3_errmsg(g_db);
+                return false;
+            }
+        }
+
+        // is_dirty=1 on update; offline build doesn't consume it, but keeping this
+        // identical to the cloud variant avoids schema drift
+        const char* sql = R"(
+            INSERT INTO pm_credentials (uuid, encrypted_blob, created_at_ms, updated_at_ms, is_dirty)
+            VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(uuid) DO UPDATE SET
+                encrypted_blob = excluded.encrypted_blob,
+                updated_at_ms  = excluded.updated_at_ms,
+                is_dirty       = 1
+            WHERE pm_credentials.updated_at_ms < excluded.updated_at_ms
+        )";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            if (out_error) *out_error = std::string("upsert prepare failed: ") + sqlite3_errmsg(g_db);
+            return false;
+        }
+
+        bind_text(stmt, 1, uuid);
+        bind_blob(stmt, 2, encrypted_blob);
+        bind_int64(stmt, 3, created_at_ms);
+        bind_int64(stmt, 4, updated_at_ms);
+
+        int rc = sqlite3_step(stmt);
+        if (rc != SQLITE_DONE) {
+            if (out_error) {
+                int extended = sqlite3_extended_errcode(g_db);
+                *out_error = std::string("upsert step failed: ") + sqlite3_errmsg(g_db) +
+                             " (code " + std::to_string(extended) + ")";
+            }
+            sqlite3_finalize(stmt);
+            return false;
+        }
+
+        int changes = sqlite3_changes(g_db);
+        sqlite3_finalize(stmt);
+
+        if (out_outcome) {
+            if (!existed)         *out_outcome = UpsertOutcome::Inserted;
+            else if (changes > 0) *out_outcome = UpsertOutcome::Updated;
+            else                  *out_outcome = UpsertOutcome::Skipped;
+        }
+        return true;
     }
 
     bool update_credential(
@@ -407,10 +493,6 @@ namespace vault_db {
     {
         if (!g_db) return 0;
 
-        // Only purge tombstones that:
-        // 1. Are marked deleted (deleted_at_ms IS NOT NULL)
-        // 2. Have been synced (is_dirty = 0)
-        // 3. Are older than TTL
         const char* sql = R"(
             DELETE FROM pm_credentials
             WHERE deleted_at_ms IS NOT NULL
@@ -433,9 +515,6 @@ namespace vault_db {
         return deleted;
     }
 
-    // ============================================================
-    // Sync state management
-    // ============================================================
     bool mark_synced(const std::string& uuid, int64_t server_rev)
     {
         if (!g_db) return false;
@@ -515,7 +594,6 @@ namespace vault_db {
     {
         if (!g_db) return false;
 
-        // Insert or update, but only if server_rev is newer
         const char* sql = R"(
             INSERT INTO pm_credentials (uuid, encrypted_blob, created_at_ms, updated_at_ms, server_rev, is_dirty)
             VALUES (?, ?, ?, ?, ?, 0)
@@ -542,10 +620,6 @@ namespace vault_db {
         sqlite3_finalize(stmt);
         return ok;
     }
-
-    // ============================================================
-    // Key-value metadata
-    // ============================================================
 
     std::string get_meta(const std::string& key)
     {
@@ -577,10 +651,6 @@ namespace vault_db {
         return ok;
     }
 
-    // ============================================================
-    // Salt caching
-    // ============================================================
-
     std::vector<uint8_t> get_cached_salt()
     {
         std::string hex = get_meta("encryption_salt");
@@ -598,9 +668,6 @@ namespace vault_db {
         return set_meta("encryption_salt", hex);
     }
 
-    // ============================================================
-    // Transaction helpers
-    // ============================================================
     bool begin_transaction()
     {
         return exec("BEGIN TRANSACTION");
@@ -616,9 +683,6 @@ namespace vault_db {
         return exec("ROLLBACK");
     }
 
-    // ============================================================
-    // Utility
-    // ============================================================
     int count_credentials()
     {
         if (!g_db) return 0;
@@ -659,9 +723,6 @@ namespace vault_db {
         return count;
     }
 
-    // ============================================================
-    // 2FA configuration
-    // ============================================================
     std::vector<uint8_t> get_2fa_blob()
     {
         std::vector<uint8_t> result;
@@ -736,9 +797,6 @@ namespace vault_db {
         return found;
     }
 
-    // ============================================================
-    // Recovery key
-    // ============================================================
     std::vector<uint8_t> get_recovery_blob()
     {
         std::vector<uint8_t> result;
@@ -812,9 +870,6 @@ namespace vault_db {
         return exec("DELETE FROM pm_vault_recovery WHERE id = 1");
     }
 
-    // ============================================================
-    // Integrity checking
-    // ============================================================
     bool quick_integrity_check()
     {
         if (!g_db) return false;

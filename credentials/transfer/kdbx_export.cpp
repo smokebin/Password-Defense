@@ -10,6 +10,7 @@
 #include "kdbx_export.h"
 #include "../crypto/aes_cipher.h"
 #include "../../tools/utility.h"
+#include "../../tools/totp.h"
 
 #include <sodium.h>
 #include <cstring>
@@ -17,8 +18,6 @@
 #include <sstream>
 
 namespace kdbx_export {
-
-// ---- Constants ----
 
 static const uint32_t KDBX_SIG1 = 0x9AA2D903;
 static const uint32_t KDBX_SIG2 = 0xB54BFB67;
@@ -36,8 +35,6 @@ static const uint8_t ARGON2ID_UUID[16] = {
     0x9E,0x29,0x8B,0x19, 0x56,0xDB, 0x47,0x73,
     0xB2,0x3D, 0xFC,0x3E,0xC6,0xF0,0xA1,0xE6
 };
-
-// ---- LE write helpers ----
 
 static void write_u8(std::vector<uint8_t>& buf, uint8_t v)
 {
@@ -69,16 +66,12 @@ static void write_bytes(std::vector<uint8_t>& buf, const uint8_t* data, size_t l
     buf.insert(buf.end(), data, data + len);
 }
 
-// ---- VariantDictionary builder (KDF params) ----
-
 static std::vector<uint8_t> build_kdf_parameters(const uint8_t salt[16])
 {
     std::vector<uint8_t> vd;
 
-    // Version
-    write_u16_le(vd, 0x0100);
+    write_u16_le(vd, 0x0100); // version
 
-    // Helper lambda for variant dictionary entries
     auto write_entry = [&](uint8_t type, const char* key, const uint8_t* val, uint32_t val_len) {
         write_u8(vd, type);
         uint32_t key_len = (uint32_t)strlen(key);
@@ -112,8 +105,6 @@ static std::vector<uint8_t> build_kdf_parameters(const uint8_t salt[16])
     return vd;
 }
 
-// ---- Outer header builder ----
-
 static std::vector<uint8_t> build_outer_header(
     const uint8_t master_seed[32],
     const uint8_t iv[16],
@@ -121,13 +112,12 @@ static std::vector<uint8_t> build_outer_header(
 {
     std::vector<uint8_t> hdr;
 
-    // Signatures
     write_u32_le(hdr, KDBX_SIG1);
     write_u32_le(hdr, KDBX_SIG2);
     write_u16_le(hdr, KDBX_VER_MINOR);
     write_u16_le(hdr, KDBX_VER_MAJOR);
 
-    // TLV helper: ID(1) + size(4 LE) + data
+    // TLV: ID(1) + size(4 LE) + data
     auto write_tlv = [&](uint8_t id, const uint8_t* data, uint32_t len) {
         write_u8(hdr, id);
         write_u32_le(hdr, len);
@@ -158,8 +148,6 @@ static std::vector<uint8_t> build_outer_header(
     return hdr;
 }
 
-// ---- Key derivation ----
-
 struct DerivedKeys {
     uint8_t cipher_key[32];     // AES-256 key
     uint8_t hmac_base_key[64];  // For block HMAC computation
@@ -173,22 +161,21 @@ static DerivedKeys derive_kdbx_keys(
 {
     DerivedKeys keys{};
 
-    // 1. composite_key = SHA256(SHA256(password))
+    // composite_key = SHA256(SHA256(password))
     uint8_t pw_hash[32];
     crypto_hash_sha256(pw_hash, (const uint8_t*)password.data(), password.size());
     uint8_t composite_key[32];
     crypto_hash_sha256(composite_key, pw_hash, 32);
     sodium_memzero(pw_hash, 32);
 
-    // 2. transformed_key = Argon2id(composite_key, salt, I=2, M=64MB, P=1)
-    //    libsodium crypto_pwhash: passwd=composite_key(32 bytes), salt=salt(16 bytes)
+    // transformed_key = Argon2id(composite_key, salt, I=2, M=64MB, P=1)
     uint8_t transformed_key[32];
     int rc = crypto_pwhash(
         transformed_key, 32,
         (const char*)composite_key, 32,
         salt,
-        2,                      // opslimit (iterations)
-        67108864ULL,            // memlimit (64 MB)
+        2,           // iterations
+        67108864ULL, // 64 MB
         crypto_pwhash_ALG_ARGON2ID13);
 
     sodium_memzero(composite_key, 32);
@@ -197,14 +184,14 @@ static DerivedKeys derive_kdbx_keys(
         return keys; // ok = false
     }
 
-    // 3. cipher_key = SHA256(master_seed || transformed_key)
+    // cipher_key = SHA256(master_seed || transformed_key)
     crypto_hash_sha256_state sha_state;
     crypto_hash_sha256_init(&sha_state);
     crypto_hash_sha256_update(&sha_state, master_seed, 32);
     crypto_hash_sha256_update(&sha_state, transformed_key, 32);
     crypto_hash_sha256_final(&sha_state, keys.cipher_key);
 
-    // 4. hmac_base_key = SHA512(master_seed || transformed_key || 0x01)
+    // hmac_base_key = SHA512(master_seed || transformed_key || 0x01)
     crypto_hash_sha512_state sha512_state;
     crypto_hash_sha512_init(&sha512_state);
     crypto_hash_sha512_update(&sha512_state, master_seed, 32);
@@ -219,11 +206,9 @@ static DerivedKeys derive_kdbx_keys(
     return keys;
 }
 
-// ---- Per-block HMAC key derivation ----
-
 static void derive_block_hmac_key(uint64_t block_index, const uint8_t hmac_base_key[64], uint8_t out[64])
 {
-    // block_key = SHA512(block_index_8LE || hmac_base_key)
+    // SHA512(block_index_8LE || hmac_base_key)
     crypto_hash_sha512_state st;
     crypto_hash_sha512_init(&st);
     uint8_t idx_le[8];
@@ -233,8 +218,6 @@ static void derive_block_hmac_key(uint64_t block_index, const uint8_t hmac_base_
     crypto_hash_sha512_update(&st, hmac_base_key, 64);
     crypto_hash_sha512_final(&st, out);
 }
-
-// ---- Header verification (post-header) ----
 
 struct HeaderVerification {
     uint8_t sha256[32];
@@ -247,10 +230,9 @@ static HeaderVerification compute_header_verification(
 {
     HeaderVerification hv;
 
-    // SHA256 of header bytes
     crypto_hash_sha256(hv.sha256, header.data(), header.size());
 
-    // HMAC-SHA256 using header block key (block_index = 0xFFFFFFFFFFFFFFFF)
+    // block_index = 0xFFFF... is the KDBX4 convention for the header block
     uint8_t header_block_key[64];
     derive_block_hmac_key(0xFFFFFFFFFFFFFFFFULL, hmac_base_key, header_block_key);
 
@@ -263,8 +245,6 @@ static HeaderVerification compute_header_verification(
 
     return hv;
 }
-
-// ---- Inner header builder ----
 
 static std::vector<uint8_t> build_inner_header(const uint8_t inner_stream_key[32])
 {
@@ -287,8 +267,6 @@ static std::vector<uint8_t> build_inner_header(const uint8_t inner_stream_key[32
     return ih;
 }
 
-// ---- XML helpers ----
-
 static std::string xml_escape(const std::string& s)
 {
     std::string out;
@@ -308,7 +286,6 @@ static std::string xml_escape(const std::string& s)
 
 static std::string random_kdbx_uuid()
 {
-    // 16 random bytes → base64
     uint8_t buf[16];
     randombytes_buf(buf, 16);
     std::string raw((const char*)buf, 16);
@@ -317,7 +294,6 @@ static std::string random_kdbx_uuid()
 
 static std::string unix_ms_to_kdbx_time(int64_t ms)
 {
-    // ISO 8601 UTC: "YYYY-MM-DDTHH:MM:SSZ"
     if (ms <= 0) ms = helpers::now_unix_ms();
     time_t secs = (time_t)(ms / 1000);
     struct tm t;
@@ -333,13 +309,11 @@ static std::string unix_ms_to_kdbx_time(int64_t ms)
     return std::string(buf);
 }
 
-// ---- XML payload builder with ChaCha20 password protection ----
-
 static std::string build_xml(
     const std::vector<Credential>& creds,
     const uint8_t inner_stream_key[32])
 {
-    // ChaCha20 stream setup: SHA512(inner_stream_key) → first 32 = key, next 12 = nonce
+    // SHA512(inner_stream_key): first 32 = ChaCha20 key, next 12 = nonce
     uint8_t stream_hash[64];
     crypto_hash_sha512(stream_hash, inner_stream_key, 32);
     uint8_t chacha_key[32];
@@ -348,15 +322,13 @@ static std::string build_xml(
     memcpy(chacha_nonce, stream_hash + 32, 12);
     sodium_memzero(stream_hash, 64);
 
-    // Pre-generate enough ChaCha20 keystream for all passwords.
-    // First pass: compute total bytes needed.
+    // pre-generate keystream for all passwords in one shot
     size_t total_pw_bytes = 0;
     for (const auto& c : creds) {
         if (!c.is_deleted())
             total_pw_bytes += c.password.size();
     }
 
-    // Generate keystream in one shot (XOR zeros = keystream)
     std::vector<uint8_t> keystream_buf;
     if (total_pw_bytes > 0) {
         keystream_buf.resize(total_pw_bytes);
@@ -374,15 +346,13 @@ static std::string build_xml(
         return helpers::b64_encode(xored);
     };
 
-    // Group credentials by group name
-    // "" = ungrouped (goes directly under Root)
+    // "" = ungrouped, placed directly under Root
     std::map<std::string, std::vector<const Credential*>> groups;
     for (const auto& c : creds) {
         if (c.is_deleted()) continue;
         groups[c.group].push_back(&c);
     }
 
-    // Build XML
     std::ostringstream xml;
     xml << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
         << "<KeePassFile>\n"
@@ -419,21 +389,48 @@ static std::string build_xml(
             xml << "\t\t\t\t\t<String><Key>_pwmngr_pinned</Key><Value>True</Value></String>\n";
         }
 
+        // "otp" key with Protected="True" is the KeePassXC convention
+        if (!c->totp_secret.empty()) {
+            const std::string& account = !c->user.empty() ? c->user : c->email;
+            std::string uri = totp::generate_otpauth_uri(c->totp_secret, c->website, account);
+            if (!uri.empty()) {
+                xml << "\t\t\t\t\t<String><Key>otp</Key><Value Protected=\"True\">"
+                    << protect_password(uri) << "</Value></String>\n";
+            }
+        }
+
         xml << "\t\t\t\t\t<Times>\n"
             << "\t\t\t\t\t\t<CreationTime>" << unix_ms_to_kdbx_time(c->created_at_ms) << "</CreationTime>\n"
             << "\t\t\t\t\t\t<LastModificationTime>" << unix_ms_to_kdbx_time(c->updated_at_ms) << "</LastModificationTime>\n"
-            << "\t\t\t\t\t</Times>\n"
-            << "\t\t\t\t</Entry>\n";
+            << "\t\t\t\t\t</Times>\n";
+
+        // KeePassXC surfaces History sub-entries as password history
+        if (!c->password_history.empty()) {
+            xml << "\t\t\t\t\t<History>\n";
+            for (const auto& h : c->password_history) {
+                xml << "\t\t\t\t\t\t<Entry>\n"
+                    << "\t\t\t\t\t\t\t<UUID>" << random_kdbx_uuid() << "</UUID>\n"
+                    << "\t\t\t\t\t\t\t<String><Key>Title</Key><Value>" << xml_escape(c->title) << "</Value></String>\n"
+                    << "\t\t\t\t\t\t\t<String><Key>UserName</Key><Value>" << xml_escape(c->user) << "</Value></String>\n"
+                    << "\t\t\t\t\t\t\t<String><Key>Password</Key><Value Protected=\"True\">"
+                        << protect_password(h.password) << "</Value></String>\n"
+                    << "\t\t\t\t\t\t\t<Times>\n"
+                    << "\t\t\t\t\t\t\t\t<LastModificationTime>" << unix_ms_to_kdbx_time(h.changed_at_ms) << "</LastModificationTime>\n"
+                    << "\t\t\t\t\t\t\t</Times>\n"
+                    << "\t\t\t\t\t\t</Entry>\n";
+            }
+            xml << "\t\t\t\t\t</History>\n";
+        }
+
+        xml << "\t\t\t\t</Entry>\n";
     };
 
-    // Ungrouped entries (group == "")
     if (groups.count("")) {
         for (const auto* c : groups[""]) {
             write_entry(c);
         }
     }
 
-    // Named groups
     for (const auto& [group_name, group_creds] : groups) {
         if (group_name.empty()) continue;
 
@@ -452,7 +449,6 @@ static std::string build_xml(
         << "\t</Root>\n"
         << "</KeePassFile>";
 
-    // Cleanup
     sodium_memzero(chacha_key, 32);
     sodium_memzero(chacha_nonce, 12);
     if (!keystream_buf.empty())
@@ -461,16 +457,13 @@ static std::string build_xml(
     return xml.str();
 }
 
-// ---- HMAC block stream builder ----
-
 static std::vector<uint8_t> build_hmac_block_stream(
     const std::vector<uint8_t>& encrypted_payload,
     const uint8_t hmac_base_key[64])
 {
     std::vector<uint8_t> blocks;
 
-    // Block 0: HMAC(32) + size(4 LE) + data(N)
-    {
+    { // block 0: HMAC(32) + size(4 LE) + data
         uint8_t block_key[64];
         derive_block_hmac_key(0, hmac_base_key, block_key);
 
@@ -479,7 +472,7 @@ static std::vector<uint8_t> build_hmac_block_stream(
         crypto_auth_hmacsha256_state hmac_st;
         crypto_auth_hmacsha256_init(&hmac_st, block_key, 64);
 
-        uint8_t idx_le[8] = { 0, 0, 0, 0, 0, 0, 0, 0 }; // block 0
+        uint8_t idx_le[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
         crypto_auth_hmacsha256_update(&hmac_st, idx_le, 8);
 
         uint32_t data_size = (uint32_t)encrypted_payload.size();
@@ -500,8 +493,7 @@ static std::vector<uint8_t> build_hmac_block_stream(
         write_bytes(blocks, encrypted_payload.data(), encrypted_payload.size());
     }
 
-    // Block 1 (terminator): HMAC(32) + size=0(4)
-    {
+    { // block 1 (terminator): HMAC(32) + size=0
         uint8_t block_key[64];
         derive_block_hmac_key(1, hmac_base_key, block_key);
 
@@ -509,13 +501,12 @@ static std::vector<uint8_t> build_hmac_block_stream(
         crypto_auth_hmacsha256_state hmac_st;
         crypto_auth_hmacsha256_init(&hmac_st, block_key, 64);
 
-        uint8_t idx_le[8] = { 1, 0, 0, 0, 0, 0, 0, 0 }; // block 1
+        uint8_t idx_le[8] = { 1, 0, 0, 0, 0, 0, 0, 0 };
         crypto_auth_hmacsha256_update(&hmac_st, idx_le, 8);
 
-        uint8_t size_le[4] = { 0, 0, 0, 0 }; // size = 0
+        uint8_t size_le[4] = { 0, 0, 0, 0 };
         crypto_auth_hmacsha256_update(&hmac_st, size_le, 4);
 
-        // No data for terminator block
         crypto_auth_hmacsha256_final(&hmac_st, block_hmac);
 
         sodium_memzero(block_key, 64);
@@ -527,8 +518,6 @@ static std::vector<uint8_t> build_hmac_block_stream(
     return blocks;
 }
 
-// ---- Public API ----
-
 ExportResult export_kdbx(
     const std::vector<Credential>& creds,
     const std::string& password,
@@ -536,7 +525,6 @@ ExportResult export_kdbx(
 {
     ExportResult res;
 
-    // 1. Generate random material
     uint8_t master_seed[32];
     uint8_t enc_iv[16];
     uint8_t kdf_salt[16];
@@ -547,32 +535,27 @@ ExportResult export_kdbx(
     randombytes_buf(kdf_salt, 16);
     randombytes_buf(inner_stream_key, 32);
 
-    // 2. Build outer header
     auto header = build_outer_header(master_seed, enc_iv, kdf_salt);
 
-    // 3. Derive keys
     auto keys = derive_kdbx_keys(password, master_seed, kdf_salt);
     if (!keys.ok) {
         res.error = "Key derivation failed (insufficient memory?)";
         return res;
     }
 
-    // 4. Compute header verification
     auto hv = compute_header_verification(header, keys.hmac_base_key);
 
-    // 5. Build inner header + XML payload
     auto inner_hdr = build_inner_header(inner_stream_key);
     std::string xml = build_xml(creds, inner_stream_key);
     sodium_memzero(inner_stream_key, 32);
 
-    // 6. Assemble plaintext = inner_header + xml
     std::vector<uint8_t> plaintext;
     plaintext.reserve(inner_hdr.size() + xml.size());
     plaintext.insert(plaintext.end(), inner_hdr.begin(), inner_hdr.end());
     plaintext.insert(plaintext.end(), (uint8_t*)xml.data(), (uint8_t*)xml.data() + xml.size());
     sodium_memzero(xml.data(), xml.size());
 
-    // 7. PKCS7 pad + AES-256-CBC encrypt
+    // PKCS7 pad + AES-256-CBC
     std::vector<unsigned char> padded = helpers::add_padding(
         std::vector<unsigned char>(plaintext.begin(), plaintext.end()));
     sodium_memzero(plaintext.data(), plaintext.size());
@@ -592,7 +575,6 @@ ExportResult export_kdbx(
         return res;
     }
 
-    // 8. Wrap in HMAC block stream
     auto hmac_blocks = build_hmac_block_stream(
         std::vector<uint8_t>(encrypted.begin(), encrypted.end()),
         keys.hmac_base_key);
@@ -600,7 +582,6 @@ ExportResult export_kdbx(
     sodium_memzero(keys.cipher_key, 32);
     sodium_memzero(keys.hmac_base_key, 64);
 
-    // 9. Assemble final file: header + sha256 + hmac + hmac_blocks
     std::vector<unsigned char> output;
     output.reserve(header.size() + 32 + 32 + hmac_blocks.size());
     output.insert(output.end(), header.begin(), header.end());
@@ -608,13 +589,11 @@ ExportResult export_kdbx(
     output.insert(output.end(), hv.hmac, hv.hmac + 32);
     output.insert(output.end(), hmac_blocks.begin(), hmac_blocks.end());
 
-    // 10. Write to file
     if (!helpers::bytes_to_file(file_path, output)) {
         res.error = "Could not write file";
         return res;
     }
 
-    // Count non-deleted credentials
     int count = 0;
     for (const auto& c : creds) {
         if (!c.is_deleted()) count++;

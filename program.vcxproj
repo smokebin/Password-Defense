@@ -206,6 +206,7 @@
     <ClInclude Include="ui_internal.h" />
     <ClInclude Include="app_internal.h" />
     <ClInclude Include="tools\utility.h" />
+    <ClInclude Include="tools\common_passwords_data.h" />
     <ClInclude Include="tools\totp.h" />
     <ClInclude Include="tools\qrcodegen.hpp" />
   </ItemGroup>

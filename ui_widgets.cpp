@@ -1,15 +1,10 @@
-// ui_widgets.cpp
-// Widget implementations: inputs, buttons, combos, tabs, search, password fields
+// ui_widgets.cpp — inputs, buttons, combos, tabs, search, password fields
 #include "ui_internal.h"
 
 namespace ui
 {
-    // Forward declarations
     bool IconButtonSquare2(const char* id, const char* glyph, float size);
 
-    // ============================================================
-    // CheckboxBg - Checkbox2 with visible inactive background
-    // ============================================================
     bool CheckboxBg(const char* label, bool* v)
     {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -35,7 +30,6 @@ namespace ui
             ImGui::MarkItemEdited(id);
         }
 
-        // Animation
         ImGuiStorage* st = ImGui::GetStateStorage();
         ImGuiID animKey = id + 0x9900;
         float t = st->GetFloat(animKey, *v ? 1.0f : 0.0f);
@@ -47,25 +41,15 @@ namespace ui
         ImVec2 boxMin = total_bb.Min;
         ImVec2 boxMax(boxMin.x + square_sz, boxMin.y + square_sz);
 
-        // Inactive background (visible)
         ImU32 inactiveBg = theme::ToggleInactiveBg;
         dl->AddRectFilled(boxMin, boxMax, inactiveBg, 3.0f);
-
-        // Active overlay (orange)
         dl->AddRectFilled(boxMin, boxMax, ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.384f, 0.016f, t)), 3.0f);
-
-        // Checkmark
         ImGui::RenderCheckMark(dl, ImVec2(boxMin.x + 3, (boxMin.y + boxMax.y) * 0.5f - 5), IM_COL32(255, 255, 255, (ImU8)(t * 255)), 9.0f);
-
-        // Label
         dl->AddText(ImVec2(total_bb.Max.x - label_size.x - 5, total_bb.Min.y), ImGui::GetColorU32(ImGuiCol_Text), label);
 
         return pressed;
     }
 
-    // ============================================================
-    // ToggleSwitch - iOS-style animated toggle switch
-    // ============================================================
     bool ToggleSwitch(const char* id, bool* value)
     {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -78,18 +62,16 @@ namespace ui
         const float trackR = trackH * 0.5f;
         const float thumbD = 19.0f;
         const float thumbR = thumbD * 0.5f;
-        const float totalH = thumbD; // thumb extends beyond track
+        const float totalH = thumbD; // thumb taller than track
 
         ImGui::PushID(id);
 
         ImVec2 pos = ImGui::GetCursorScreenPos();
-        // Vertically center within current line
         float lineH = ImMax(ImGui::GetTextLineHeightWithSpacing(), totalH);
         float offsetY = (lineH - totalH) * 0.5f;
         pos.y += offsetY;
 
-        // Hit rect covers the full thumb height
-        ImRect bb(pos, ImVec2(pos.x + trackW, pos.y + totalH));
+        ImRect bb(pos, ImVec2(pos.x + trackW, pos.y + totalH)); // hit rect covers full thumb height
         ImGui::ItemSize(ImVec2(trackW, lineH));
         ImGuiID wid = ImGui::GetID("##toggle");
         if (!ImGui::ItemAdd(bb, wid))
@@ -108,7 +90,6 @@ namespace ui
             ImGui::MarkItemEdited(wid);
         }
 
-        // Animate thumb position (0 = off, 1 = on)
         ImGuiStorage* st = ImGui::GetStateStorage();
         ImGuiID animKey = wid + 0x7700;
         float t = st->GetFloat(animKey, *value ? 1.0f : 0.0f);
@@ -118,36 +99,27 @@ namespace ui
         else if (t > target) t = ImMax(t - speed, target);
         st->SetFloat(animKey, t);
 
-        // Track: centered vertically within the hit rect
         float trackTop = bb.Min.y + (totalH - trackH) * 0.5f;
         ImVec2 trkMin(bb.Min.x, trackTop);
         ImVec2 trkMax(bb.Max.x, trackTop + trackH);
 
-        // Track color: lerp between off and on
         ImVec4 offCol(0x8e/255.0f, 0x8e/255.0f, 0x93/255.0f, 1.0f); // #8e8e93
         ImVec4 onCol(0xff/255.0f, 0x8c/255.0f, 0x32/255.0f, 1.0f);  // #ff8c32
         ImVec4 trackCol = UI_LerpVec4(offCol, onCol, t);
         dl->AddRectFilled(trkMin, trkMax, ImGui::ColorConvertFloat4ToU32(trackCol), trackR);
 
-        // Thumb position: slides along track, thumb center stays at track center Y
         float thumbMinX = bb.Min.x + thumbR;
         float thumbMaxX = bb.Max.x - thumbR;
         float thumbX = UI_Lerp(thumbMinX, thumbMaxX, t);
         float thumbY = trackTop + trackH * 0.5f;
 
-        // Thumb shadow
-        dl->AddCircleFilled(ImVec2(thumbX, thumbY + 1.5f), thumbR + 0.5f, IM_COL32(0, 0, 0, 40), 24);
-
-        // Thumb
+        dl->AddCircleFilled(ImVec2(thumbX, thumbY + 1.5f), thumbR + 0.5f, IM_COL32(0, 0, 0, 40), 24); // shadow
         dl->AddCircleFilled(ImVec2(thumbX, thumbY), thumbR, IM_COL32(255, 255, 255, 255), 24);
 
         ImGui::PopID();
         return changed;
     }
 
-    // ============================================================
-    // DotSlider - Discrete dot-snap slider with arrow step buttons
-    // ============================================================
     bool DotSlider(const char* id, int* value, int count)
     {
         if (count <= 0) return false;
@@ -179,7 +151,7 @@ namespace ui
         float lineH = ImMax(ImGui::GetTextLineHeightWithSpacing(), totalH);
         float offsetY = (lineH - totalH) * 0.5f;
 
-        // Left arrow button
+        // left arrow
         {
             ImVec2 btnPos(startPos.x, startPos.y + offsetY);
             ImRect btnBB(btnPos, ImVec2(btnPos.x + arrowBtnW, btnPos.y + arrowBtnH));
@@ -199,7 +171,6 @@ namespace ui
             dl->AddText(ImVec2(btnPos.x + (arrowBtnW - icoSz.x) * 0.5f, btnPos.y + (arrowBtnH - icoSz.y) * 0.5f), arrowCol, ico);
         }
 
-        // Track
         float trackX = startPos.x + arrowBtnW + gap;
         float trackY = startPos.y + offsetY + (arrowBtnH - trackH) * 0.5f;
         ImVec2 trkMin(trackX, trackY);
@@ -207,7 +178,6 @@ namespace ui
         ImU32 trackCol = dark ? theme::ScrollTrack.dark : theme::ScrollTrack.light;
         dl->AddRectFilled(trkMin, trkMax, trackCol, trackR);
 
-        // Track interaction: single hit area for click/drag + scroll
         float dotY = trackY + trackH * 0.5f;
         float dotStartX = trackX + trackPadX;
         {
@@ -218,7 +188,6 @@ namespace ui
             bool trackHov = ImGui::IsItemHovered();
             bool trackActive = ImGui::IsItemActive();
 
-            // Click or drag: snap to nearest dot
             if (trackActive || (trackHov && ImGui::IsMouseClicked(0)))
             {
                 float mx = ImGui::GetMousePos().x;
@@ -229,7 +198,6 @@ namespace ui
 
         }
 
-        // Draw dots
         ImVec2 mousePos = ImGui::GetMousePos();
         bool trackHovered = (mousePos.x >= trackX && mousePos.x <= trackX + trackW &&
                              mousePos.y >= startPos.y + offsetY && mousePos.y <= startPos.y + offsetY + arrowBtnH);
@@ -238,7 +206,6 @@ namespace ui
             float dx = dotStartX + i * dotSpacing;
             bool isActive = (i == *value);
 
-            // Check if mouse is near this dot for hover effect
             bool dotHov = trackHovered && fabsf(mousePos.x - dx) < dotSpacing * 0.45f;
 
             if (isActive)
@@ -255,7 +222,7 @@ namespace ui
             }
         }
 
-        // Right arrow button
+        // right arrow
         {
             ImVec2 btnPos(trackX + trackW + gap, startPos.y + offsetY);
             ImGui::SetCursorScreenPos(btnPos);
@@ -273,20 +240,15 @@ namespace ui
             dl->AddText(ImVec2(btnPos.x + (arrowBtnW - icoSz.x) * 0.5f, btnPos.y + (arrowBtnH - icoSz.y) * 0.5f), arrowCol, ico);
         }
 
-        // Advance layout cursor past the whole widget
         ImGui::SetCursorScreenPos(ImVec2(startPos.x, startPos.y));
         ImGui::ItemSize(ImVec2(totalW, lineH));
 
-        // Clamp
         *value = ImClamp(*value, 0, count - 1);
 
         ImGui::PopID();
         return *value != oldVal;
     }
 
-    // ============================================================
-    // VerticalStepper - Compact vertical stepper with inline edit
-    // ============================================================
     bool VerticalStepper(const char* id, int* value, int min_val, int max_val, const char* suffix)
     {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -314,15 +276,13 @@ namespace ui
             return false;
         }
 
-        // Container background
         ImU32 bgCol = dark ? IM_COL32(44, 44, 48, 255) : IM_COL32(240, 240, 243, 255);
         dl->AddRectFilled(bb.Min, bb.Max, bgCol, rounding);
 
-        // Edit state (per-widget via storage)
         ImGuiStorage* st = ImGui::GetStateStorage();
         ImGuiID editKey = wid + 0x8800;
         ImGuiID prevKey = wid + 0x8801;
-        ImGuiID focusKey = wid + 0x8802;  // 0 = need focus, 1 = focusing, 2+ = focused
+        ImGuiID focusKey = wid + 0x8802;  // 0=need focus, 1=focusing, 2+=focused
         bool editing = st->GetInt(editKey, 0) != 0;
         static char s_edit_buf[16];
         static ImGuiID s_editing_id = 0;
@@ -330,7 +290,7 @@ namespace ui
         bool atMin = (*value <= min_val);
         bool atMax = (*value >= max_val);
 
-        // Chevron UP
+        // up chevron
         {
             ImVec2 cPos(bb.Min.x, bb.Min.y);
             ImGui::SetCursorScreenPos(cPos);
@@ -346,14 +306,12 @@ namespace ui
             dl->AddText(ImVec2(cPos.x + (w - icoSz.x) * 0.5f, cPos.y + (chevronH - icoSz.y) * 0.5f), col, ico);
         }
 
-        // Value display / edit
         {
             float valTop = bb.Min.y + chevronH;
             ImVec2 valPos(bb.Min.x, valTop);
 
             if (editing && s_editing_id == wid)
             {
-                // Input mode
                 ImGui::SetCursorScreenPos(ImVec2(bb.Min.x + 4.0f, valTop + (valueH - ImGui::GetFrameHeight()) * 0.5f));
                 ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
                 ImGui::PushStyleColor(ImGuiCol_Text, dark ? IM_COL32(255, 255, 255, 255) : IM_COL32(20, 20, 20, 255));
@@ -400,7 +358,7 @@ namespace ui
             }
             else
             {
-                // Display mode — click to edit
+                // click to edit
                 ImGui::SetCursorScreenPos(valPos);
                 if (ImGui::InvisibleButton("##val", ImVec2(w, valueH)))
                 {
@@ -426,7 +384,7 @@ namespace ui
             }
         }
 
-        // Chevron DOWN
+        // down chevron
         {
             ImVec2 cPos(bb.Min.x, bb.Max.y - chevronH);
             ImGui::SetCursorScreenPos(cPos);
@@ -442,7 +400,6 @@ namespace ui
             dl->AddText(ImVec2(cPos.x + (w - icoSz.x) * 0.5f, cPos.y + (chevronH - icoSz.y) * 0.5f), col, ico);
         }
 
-        // Restore cursor
         ImGui::SetCursorScreenPos(ImVec2(pos.x + w, pos.y));
 
         *value = ImClamp(*value, min_val, max_val);
@@ -451,9 +408,6 @@ namespace ui
         return *value != oldVal;
     }
 
-    // ============================================================
-    // AnimatedComboDot - Custom animated dropdown with dot indicator
-    // ============================================================
     float UI_Lerp(float a, float b, float t) { return a + (b - a) * t; }
     ImVec4 UI_LerpVec4(const ImVec4& a, const ImVec4& b, float t)
     {
@@ -476,13 +430,11 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = window->DrawList;
 
-        // Style knobs
         const float rounding = 6.0f;
         const ImVec2 pad = ImVec2(10.0f, 0.0f);
         const float chevron_w = 16.0f;
         const float dot_r = 3.0f;
 
-        // Colors (theme-aware)
         const bool dark = g_shell_ptr ? g_shell_ptr->dark_theme : true;
         const ImVec4 col_bg       = dark ? (light ? ImVec4(0.22f, 0.22f, 0.24f, 1.00f) : ImVec4(0.12f, 0.12f, 0.13f, 1.00f)) : ImVec4(0.95f, 0.95f, 0.96f, 1.00f);
         const ImVec4 col_bg_hov   = dark ? (light ? ImVec4(0.26f, 0.26f, 0.28f, 1.00f) : ImVec4(0.16f, 0.16f, 0.18f, 1.00f)) : ImVec4(0.90f, 0.90f, 0.92f, 1.00f);
@@ -492,7 +444,6 @@ namespace ui
         const ImVec4 col_muted    = dark ? ImVec4(0.92f, 0.92f, 0.92f, 0.55f) : ImVec4(0.10f, 0.10f, 0.10f, 0.55f);
         const ImVec4 col_popup_bg = dark ? ImVec4(0.10f, 0.10f, 0.11f, 1.00f) : ImVec4(0.98f, 0.98f, 0.98f, 1.00f);
 
-        // Layout
         ImVec2 pos = ImGui::GetCursorScreenPos();
         ImVec2 size(width, height);
 
@@ -508,7 +459,6 @@ namespace ui
         if (pressed)
             ImGui::OpenPopupEx(popup_id, ImGuiPopupFlags_None);
 
-        // Animation storage
         ImGuiStorage* st = ImGui::GetStateStorage();
         const ImGuiID key_hover = base_id + 0x1001;
         const ImGuiID key_open = base_id + 0x1002;
@@ -526,7 +476,6 @@ namespace ui
         st->SetFloat(key_hover, hover_t);
         st->SetFloat(key_open, open_t);
 
-        // Draw pill
         ImVec4 bg = col_bg;
         bg = UI_LerpVec4(bg, col_bg_hov, hover_t);
         bg = UI_LerpVec4(bg, col_bg_open, open_t);
@@ -538,7 +487,6 @@ namespace ui
 
         ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
 
-        // Clip combo pill to its bounds, intersected with parent clip rect
         dl->PushClipRect(
             ImVec2(bb.Min.x - 2.0f, bb.Min.y - 1.0f),
             ImVec2(bb.Max.x + 2.0f, bb.Max.y + 3.0f), true);
@@ -554,7 +502,6 @@ namespace ui
                 lipCol, rounding);
         }
 
-        // Main fill
         dl->AddRectFilled(bb.Min, bb.Max, bg_u32, rounding);
 
         // Top inner shine
@@ -575,17 +522,16 @@ namespace ui
                 shadowCol, 1.0f);
         }
 
-        // Border
         dl->AddRect(bb.Min, bb.Max, border_u32, rounding, 0, 1.0f);
 
-        // Text (clipped to not overlap chevron)
+        // text clipped to not overlap chevron
         ImVec2 text_pos = ImVec2(bb.Min.x + pad.x, bb.Min.y + (size.y - ImGui::GetTextLineHeight()) * 0.5f);
         float text_max_x = bb.Max.x - pad.x - chevron_w - 4.0f;
         dl->PushClipRect(bb.Min, ImVec2(text_max_x, bb.Max.y), true);
         dl->AddText(text_pos, text_u32, preview_value ? preview_value : "");
         dl->PopClipRect();
 
-        // Chevron (crossfade DOWN -> UP)
+        // chevron crossfades DOWN↔UP when open
         const char* chev_down = ICON_MDI_CHEVRON_DOWN;
         const char* chev_up = ICON_MDI_CHEVRON_UP;
         ImVec2 chev_pos = ImVec2(bb.Max.x - pad.x - chevron_w, bb.Min.y + (size.y - ImGui::GetTextLineHeight()) * 0.5f);
@@ -601,12 +547,11 @@ namespace ui
 
         dl->PopClipRect();
 
-        // Popup
         bool changed = false;
 
         const float popup_h = items_count * 26.0f + 12.0f;
         const float space_below = io.DisplaySize.y - bb.Max.y;
-        const bool flip_up = space_below < popup_h + 8.0f;
+        const bool flip_up = space_below < popup_h + 8.0f; // flip above if no room below
         float popup_y = flip_up ? (bb.Min.y - popup_h - 4.0f) : (bb.Max.y + 4.0f);
         ImGui::SetNextWindowPos(ImVec2(bb.Min.x, popup_y));
         ImGui::SetNextWindowSize(ImVec2(size.x, 0.0f));
@@ -619,8 +564,7 @@ namespace ui
 
         if (ImGui::BeginPopupEx(popup_id, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar))
         {
-            // Get the popup's draw list (not the parent window's)
-            ImDrawList* popup_dl = ImGui::GetWindowDrawList();
+            ImDrawList* popup_dl = ImGui::GetWindowDrawList(); // must use popup's dl, not parent's
 
             for (int i = 0; i < items_count; i++)
             {
@@ -644,7 +588,6 @@ namespace ui
                     popup_dl->AddRectFilled(row_bb.Min, row_bb.Max, hi, 4.0f);
                 }
 
-                // Dot indicator
                 const float dot_x = row_bb.Min.x + 10.0f;
                 const float dot_y = (row_bb.Min.y + row_bb.Max.y) * 0.5f;
                 if (selected)
@@ -652,7 +595,6 @@ namespace ui
                 else
                     popup_dl->AddCircleFilled(ImVec2(dot_x, dot_y), dot_r, ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x, col_text.y, col_text.z, 0.18f)));
 
-                // Option text
                 ImU32 opt_col = selected ? text_u32 : muted_u32;
                 popup_dl->AddText(ImVec2(row_bb.Min.x + 22.0f, row_bb.Min.y + (row_h - ImGui::GetTextLineHeight()) * 0.5f), opt_col, items[i]);
 
@@ -676,9 +618,6 @@ namespace ui
         return changed;
     }
 
-    // ============================================================
-    // AnimatedComboDotMulti - Multi-select dropdown with dot indicators
-    // ============================================================
     bool AnimatedComboDotMulti(
         const char* id,
         const char* preview_label,
@@ -691,12 +630,10 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = window->DrawList;
 
-        // Style knobs
         const float rounding = 4.0f;
         const ImVec2 pad = ImVec2(4.0f, 0.0f);
         const float dot_r = 3.0f;
 
-        // Colors (theme-aware)
         const bool dark = g_shell_ptr ? g_shell_ptr->dark_theme : true;
         const ImVec4 col_text     = dark ? ImVec4(0.92f, 0.92f, 0.92f, 1.00f) : ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
         const ImVec4 col_muted    = dark ? ImVec4(0.92f, 0.92f, 0.92f, 0.55f) : ImVec4(0.10f, 0.10f, 0.10f, 0.55f);
@@ -705,12 +642,11 @@ namespace ui
 
         const float chevW  = ImGui::CalcTextSize(ICON_MDI_CHEVRON_DOWN).x;
 
-        // Fixed width: sized to fit "Passwords" + gap + chevron
+        // wide enough for "Passwords" label + chevron
         const float baseW = ImGui::CalcTextSize("Passwords").x;
         const float width = pad.x + baseW + 6.0f + chevW + pad.x;
         const float height = ImGui::GetFrameHeight();
 
-        // Layout
         ImVec2 pos = ImGui::GetCursorScreenPos();
         ImVec2 size(width, height);
 
@@ -726,7 +662,6 @@ namespace ui
         if (pressed)
             ImGui::OpenPopupEx(popup_id, ImGuiPopupFlags_None);
 
-        // Animation storage
         ImGuiStorage* st = ImGui::GetStateStorage();
         const ImGuiID key_open = base_id + 0x1002;
 
@@ -739,14 +674,12 @@ namespace ui
 
         ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
 
-        // Hover highlight
         if (hovered || popup_open)
         {
             dl->AddRectFilled(bb.Min, bb.Max,
                 ImGui::ColorConvertFloat4ToU32(col_hover_bg), rounding);
         }
 
-        // Label text (clipped to available space before chevron)
         ImU32 text_u32 = ImGui::ColorConvertFloat4ToU32(col_text);
         ImU32 muted_u32 = ImGui::ColorConvertFloat4ToU32(col_muted);
         ImVec2 text_pos = ImVec2(bb.Min.x + pad.x, bb.Min.y + (size.y - ImGui::GetTextLineHeight()) * 0.5f);
@@ -754,7 +687,6 @@ namespace ui
         ImVec4 clip_rect(text_pos.x, bb.Min.y, maxTextX, bb.Max.y);
         dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_pos, text_u32, preview_label, nullptr, 0.0f, &clip_rect);
 
-        // Chevron (crossfade DOWN <-> UP)
         ImVec2 chev_pos = ImVec2(bb.Max.x - pad.x - chevW, bb.Min.y + (size.y - ImGui::GetTextLineHeight()) * 0.5f);
         {
             float a_down = (1.0f - open_t) * 0.7f;
@@ -763,7 +695,6 @@ namespace ui
             dl->AddText(chev_pos, ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x, col_text.y, col_text.z, a_up)),   ICON_MDI_CHEVRON_UP);
         }
 
-        // Popup
         bool changed = false;
 
         const float popup_w = 190.0f;
@@ -778,9 +709,9 @@ namespace ui
 
         if (ImGui::BeginPopupEx(popup_id, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar))
         {
-            ImDrawList* popup_dl = ImGui::GetWindowDrawList();
+            ImDrawList* popup_dl = ImGui::GetWindowDrawList(); // must use popup's dl
 
-            // Helper: map @-prefixed items to icons
+            // @-prefixed items map to type icons
             auto TypeIconForFilter = [](const std::string& s) -> const char* {
                 if (s == "@Passwords")    return ICON_MDI_KEY;
                 if (s == "@Cards")    return ICON_MDI_CREDIT_CARD;
@@ -789,15 +720,13 @@ namespace ui
                 return nullptr;
             };
 
-            // Count non-separator, non-All items for "select all" logic
-            int selectable_count = 0;
+            int selectable_count = 0; // excludes "All" and separators
             for (int i = 1; i < (int)items.size(); i++)
                 if (items[i] != "---") selectable_count++;
 
             for (int i = 0; i < (int)items.size(); i++)
             {
-                // Separator sentinel
-                if (items[i] == "---")
+                if (items[i] == "---") // separator sentinel
                 {
                     ImVec2 sep_start = ImGui::GetCursorScreenPos();
                     float sep_w = ImGui::GetContentRegionAvail().x;
@@ -832,7 +761,6 @@ namespace ui
                     popup_dl->AddRectFilled(row_bb.Min, row_bb.Max, hi, 4.0f);
                 }
 
-                // Dot indicator
                 const float dot_x = row_bb.Min.x + 10.0f;
                 const float dot_y = (row_bb.Min.y + row_bb.Max.y) * 0.5f;
                 if (item_selected)
@@ -840,7 +768,7 @@ namespace ui
                 else
                     popup_dl->AddCircleFilled(ImVec2(dot_x, dot_y), dot_r, ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x, col_text.y, col_text.z, 0.18f)));
 
-                // Option text (type items get icon + stripped label)
+                // type items get icon + label with '@' stripped
                 ImU32 opt_col = item_selected ? text_u32 : muted_u32;
                 float textX = row_bb.Min.x + 22.0f;
                 float textY = row_bb.Min.y + (row_h - ImGui::GetTextLineHeight()) * 0.5f;
@@ -850,12 +778,11 @@ namespace ui
                 {
                     popup_dl->AddText(ImVec2(textX, textY), opt_col, typeIcon);
                     textX += ImGui::CalcTextSize(typeIcon).x + 4.0f;
-                    // Strip '@' prefix for display
-                    popup_dl->AddText(ImVec2(textX, textY), opt_col, items[i].c_str() + 1);
+                    popup_dl->AddText(ImVec2(textX, textY), opt_col, items[i].c_str() + 1); // skip '@'
                 }
                 else
                 {
-                    // User groups get folder icon
+                    // user groups get folder icon
                     if (!is_all)
                     {
                         const char* folderIco = ICON_MDI_FOLDER;
@@ -870,19 +797,17 @@ namespace ui
                     changed = true;
                     if (is_all)
                     {
-                        // "Filter" (show all) clicked -> clear specific selections
-                        selected.clear();
+                        selected.clear(); // "All" clears specific filters
                     }
                     else
                     {
-                        // Toggle this group
                         auto it = selected.find(items[i]);
                         if (it != selected.end())
                             selected.erase(it);
                         else
                             selected.insert(items[i]);
 
-                        // If all specific items are now selected, revert to "All"
+                        // all specific items selected → revert to All
                         if ((int)selected.size() >= selectable_count)
                             selected.clear();
                     }
@@ -891,10 +816,8 @@ namespace ui
                 ImGui::PopID();
             }
 
-            // Tags section (if any tags exist)
             if (g_shell_ptr && !g_shell_ptr->all_tags.empty())
             {
-                // Separator
                 ImVec2 sep_start = ImGui::GetCursorScreenPos();
                 float sep_w = ImGui::GetContentRegionAvail().x;
                 popup_dl->AddLine(
@@ -925,7 +848,6 @@ namespace ui
                         popup_dl->AddRectFilled(row_bb.Min, row_bb.Max, hi, 4.0f);
                     }
 
-                    // Dot indicator
                     const float dot_x = row_bb.Min.x + 10.0f;
                     const float dot_y = (row_bb.Min.y + row_bb.Max.y) * 0.5f;
                     if (tag_selected)
@@ -933,7 +855,6 @@ namespace ui
                     else
                         popup_dl->AddCircleFilled(ImVec2(dot_x, dot_y), dot_r, ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x, col_text.y, col_text.z, 0.18f)));
 
-                    // Tag icon + name
                     ImU32 opt_col = tag_selected ? text_u32 : muted_u32;
                     float textX = row_bb.Min.x + 22.0f;
                     float textY = row_bb.Min.y + (row_h - ImGui::GetTextLineHeight()) * 0.5f;
@@ -966,13 +887,7 @@ namespace ui
         return changed;
     }
 
-    // ============================================================
-    // HoldToActionButton - Hold to confirm dangerous actions
-    // ============================================================
-    // Returns true exactly once when hold completes.
-    // - hold_seconds: time required to trigger
-    // - If released early, progress resets.
-    // - If mouse leaves, we cancel.
+    // returns true once when hold completes; resets if released early or mouse leaves
     bool HoldToActionButton(const char* id, const char* label, float hold_seconds,
                                    ImVec2 size,
                                    float rounding)
@@ -983,7 +898,6 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = window->DrawList;
 
-        // Default sizing
         if (size.x <= 0.0f) size.x = ImGui::CalcTextSize(label).x + 28.0f * 2.0f;
         if (size.y <= 0.0f) size.y = 34.0f;
 
@@ -997,8 +911,7 @@ namespace ui
 
         ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
 
-        // Storage for progress (0..1)
-        ImGuiStorage* st = ImGui::GetStateStorage();
+        ImGuiStorage* st = ImGui::GetStateStorage(); // progress 0..1
         ImGuiID wid = ImGui::GetItemID();
         ImGuiID key = wid + 0x4A11;
         float t = st->GetFloat(key, 0.0f);
@@ -1009,7 +922,6 @@ namespace ui
 
         bool triggered = false;
 
-        // Update progress
         if (held && (!cancel_if_leave || hovered))
         {
             t = ImClamp(t + dt * speed, 0.0f, 1.0f);
@@ -1028,11 +940,9 @@ namespace ui
 
         st->SetFloat(key, t);
 
-        // Styling (SoftBevel)
         const bool dark = g_shell_ptr ? g_shell_ptr->dark_theme : true;
 
-        // Danger fill (red tint)
-        const ImU32 col_fill    = ImGui::GetColorU32(ImVec4(1.00f, 0.25f, 0.25f, 0.20f));
+        const ImU32 col_fill    = ImGui::GetColorU32(ImVec4(1.00f, 0.25f, 0.25f, 0.20f)); // danger red tint
         const ImU32 col_fill_hi = ImGui::GetColorU32(ImVec4(1.00f, 0.25f, 0.25f, 0.28f));
 
         const ImU32 col_text    = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
@@ -1054,7 +964,7 @@ namespace ui
 
         dl->AddRectFilled(bb.Min, bb.Max, faceBg, rounding);
 
-        // Bottom lip shadow
+        // bottom lip shadow (split channel 0, clipped to lower half)
         {
             const float lipOff = 1.5f;
             float clipTop = bb.Min.y + (size.y * 0.6f);
@@ -1065,7 +975,7 @@ namespace ui
             splitter.SetCurrentChannel(dl, 1);
         }
 
-        // Top highlight
+        // top highlight (clipped to upper third)
         {
             const float inset = 1.0f;
             float clipBot = bb.Min.y + (size.y * 0.35f);
@@ -1078,7 +988,7 @@ namespace ui
 
         splitter.Merge(dl);
 
-        // Draw hold progress fill (left-to-right, on top)
+        // hold progress fill, left-to-right
         if (t > 0.001f)
         {
             ImRect fill = bb;
@@ -1086,7 +996,6 @@ namespace ui
             dl->AddRectFilled(fill.Min, fill.Max, held ? col_fill_hi : col_fill, rounding);
         }
 
-        // Draw label centered-left
         const float pad_x = 18.0f;
         ImVec2 text_sz = ImGui::CalcTextSize(label);
         ImVec2 text_pos(bb.Min.x + pad_x, bb.Min.y + (size.y - text_sz.y) * 0.5f);
@@ -1097,9 +1006,6 @@ namespace ui
         return triggered;
     }
 
-    // ============================================================
-    // StyledButton - Matches HoldToActionButton visuals, single click
-    // ============================================================
     bool StyledButton(const char* id, const char* label,
                       ImVec2 size,
                       float rounding)
@@ -1109,7 +1015,6 @@ namespace ui
 
         ImDrawList* dl = window->DrawList;
 
-        // Default sizing
         if (size.x <= 0.0f) size.x = ImGui::CalcTextSize(label).x + 36.0f;
         if (size.y <= 0.0f) size.y = 30.0f;
         if (rounding < 0.0f) rounding = 7.0f;
@@ -1125,7 +1030,6 @@ namespace ui
 
         ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
 
-        // SoftBevel style
         const bool dark = g_shell_ptr ? g_shell_ptr->dark_theme : true;
 
         ImU32 faceBg;
@@ -1145,7 +1049,6 @@ namespace ui
 
         dl->AddRectFilled(bb.Min, bb.Max, faceBg, rounding);
 
-        // Bottom lip shadow
         {
             const float lipOff = 1.5f;
             float clipTop = bb.Min.y + (size.y * 0.6f);
@@ -1156,7 +1059,6 @@ namespace ui
             splitter.SetCurrentChannel(dl, 1);
         }
 
-        // Top highlight
         {
             const float inset = 1.0f;
             float clipBot = bb.Min.y + (size.y * 0.35f);
@@ -1169,7 +1071,6 @@ namespace ui
 
         splitter.Merge(dl);
 
-        // Draw label centered
         ImU32 col_text = ImGui::GetColorU32(hovered ? ImGuiCol_Text : ImGuiCol_TextDisabled);
         ImVec2 text_sz = ImGui::CalcTextSize(label);
         ImVec2 text_pos(bb.Min.x + (size.x - text_sz.x) * 0.5f, bb.Min.y + (size.y - text_sz.y) * 0.5f);
@@ -1179,7 +1080,7 @@ namespace ui
         return clicked;
     }
 
-    // StyledButtonLight — lighter variant for modal contexts
+    // lighter variant, animated — matches modal/settings context
     bool StyledButtonLight(const char* id, const char* label, ImVec2 size, float rounding)
     {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
@@ -1235,7 +1136,7 @@ namespace ui
 
         dl->AddRectFilled(bb.Min, bb.Max, bgCol, rounding);
 
-        // Bottom lip
+        // bottom lip
         {
             const float lipOffset = 1.8f;
             float clipTop = bb.Min.y + (size.y * 0.62f);
@@ -1246,7 +1147,7 @@ namespace ui
             splitter.SetCurrentChannel(dl, 1);
         }
 
-        // Right lip
+        // right lip
         {
             const float lipOffset = 1.8f;
             float clipLeft = bb.Min.x + (size.x * 0.40f);
@@ -1257,7 +1158,7 @@ namespace ui
             splitter.SetCurrentChannel(dl, 1);
         }
 
-        // Top highlight
+        // top highlight
         {
             ImVec4 hlV = col_hl;
             hlV = UI_LerpVec4(hlV, col_hl_hov, hover_t);
@@ -1285,7 +1186,6 @@ namespace ui
 
     void EnsureAnimatedTabsFromLabels(AnimatedTabBar& bar, const std::vector<std::string>& labels, int active)
     {
-        // rebuild if count differs
         if ((int)bar.tabs.size() != (int)labels.size())
         {
             bar.tabs.clear();
@@ -1310,13 +1210,13 @@ namespace ui
             return;
         }
 
-        // update labels if changed (keep animations)
+        // update labels in-place (keeps animation state)
         for (int i = 0; i < (int)labels.size(); ++i)
         {
             if (bar.tabs[i].label != labels[i])
             {
                 bar.tabs[i].label = labels[i];
-                bar.tabs[i].id = 0; // force GetID() refresh next draw
+                bar.tabs[i].id = 0; // force GetID() refresh
             }
         }
 
@@ -1346,7 +1246,6 @@ namespace ui
         ImVec2 barPos = ImGui::GetCursorScreenPos();
         bar.barTargetWidth = 0.0f;
 
-        // ---- measure/animate widths (unchanged) ----
         for (int i = 0; i < (int)bar.tabs.size(); ++i)
         {
             AnimatedTab& t = bar.tabs[i];
@@ -1402,12 +1301,11 @@ namespace ui
         ImRect barRect(barPos, ImVec2(barPos.x + bar.barCurrentWidth, barPos.y + barHeight));
         float barRounding = barHeight * 0.5f;
 
-        // RESERVE LAYOUT SPACE ONCE (this is the real fix)
+        // reserve layout space once — must happen before the per-tab ItemAdd calls
         ImGui::ItemSize(ImVec2(bar.barCurrentWidth, barHeight));
         ImGuiID barId = window->GetID("##animated_tabbar");
         ImGui::ItemAdd(barRect, barId);
 
-        // draw bar bg
         dl->AddRectFilled(barRect.Min, barRect.Max, ImGui::GetColorU32(style.Colors[ImGuiCol_ChildBg]), barRounding);
 
         float x = barPos.x;
@@ -1449,7 +1347,7 @@ namespace ui
             baseCol.w *= ImClamp(t.alpha, 0.55f, 1.0f);
             dl->AddRectFilled(tabRect.Min, tabRect.Max, ImGui::GetColorU32(baseCol), tabSize.y * 0.5f);
 
-            // icon: circle + first letter
+            // icon: filled circle + first letter
             if (w > 0.0f)
             {
                 ImVec2 iconCenter(tabRect.Min.x + iconWidth * 0.5f, tabRect.Min.y + tabSize.y * 0.5f);
@@ -1468,7 +1366,6 @@ namespace ui
                 }
             }
 
-            // label fade-in
             if (t.alpha > 0.01f)
             {
                 ImVec2 labelSize = ImGui::CalcTextSize(t.label.c_str(), nullptr, true);
@@ -1485,7 +1382,6 @@ namespace ui
             x += w + spacing;
         }
 
-        // underline indicator
         if (bar.activeIndex >= 0 && bar.activeIndex < (int)bar.tabs.size())
         {
             float xAccum = barPos.x;
@@ -1511,18 +1407,15 @@ namespace ui
             dl->AddRectFilled(ul.Min, ul.Max, ImGui::GetColorU32(colors::SecondColor), underlineHeight * 0.5f);
         }
 
-        // ---- dirty dot on active tab (doesn't affect layout)
+        // dirty dot on active tab (overlay only, doesn't affect layout)
         if (dirtyActive && bar.activeIndex >= 0 && bar.activeIndex < (int)bar.tabs.size())
         {
             AnimatedTab& a = bar.tabs[bar.activeIndex];
             if (a.lastRectValid)
             {
-                // place dot near top-right of the active tab
                 const float r = 4.0f;
                 ImVec2 p(a.lastRect.Max.x - 10.0f, a.lastRect.Min.y + 8.0f);
-
-                // subtle glow + solid dot
-                dl->AddCircleFilled(p, r + 2.0f, ImGui::GetColorU32(ImVec4(colors::SecondColor.x, colors::SecondColor.y, colors::SecondColor.z, 0.25f)), 24);
+                dl->AddCircleFilled(p, r + 2.0f, ImGui::GetColorU32(ImVec4(colors::SecondColor.x, colors::SecondColor.y, colors::SecondColor.z, 0.25f)), 24); // glow
                 dl->AddCircleFilled(p, r, ImGui::GetColorU32(colors::SecondColor), 24);
                 dl->AddCircle(p, r, ImGui::GetColorU32(ImVec4(0, 0, 0, 0.35f)), 24, 1.0f);
             }
@@ -1532,7 +1425,7 @@ namespace ui
         return result;
     }
 
-    // SettingRightType, SettingRowSpec, SettingRowResult defined in ui_internal.h
+    // SettingRightType, SettingRowSpec, SettingRowResult — see ui_internal.h
 
     const char* g_settings_scroll_target = nullptr;
 
@@ -1546,18 +1439,16 @@ namespace ui
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         if (window->SkipItems) return out;
 
-        // Full width available inside current container/child
         const float fullW = ImGui::GetContentRegionAvail().x;
         if (fullW <= 1.0f) return out;
 
         const bool is_selected = (selected_id && *selected_id == r.id);
 
-        // Reserve space (so layout advances even though we draw custom bg)
         ImVec2 rowMin = ImGui::GetCursorScreenPos();
         ImRect rowRect(rowMin, ImVec2(rowMin.x + fullW, rowMin.y + row_h));
         ImGui::ItemSize(ImVec2(fullW, row_h));
 
-        // Scroll-to-setting: check before clipping so off-screen rows can be scrolled to
+        // check before clipping so off-screen rows can still scroll into view
         if (g_settings_scroll_target && r.title && strcmp(r.title, g_settings_scroll_target) == 0)
         {
             ImGui::SetScrollHereY(0.3f);
@@ -1566,7 +1457,6 @@ namespace ui
 
         ImGui::PushID((int)r.id);
 
-        // Make the row itself an item (for hit testing)
         ImGuiID rowItemId = ImGui::GetID("##row_hit");
         if (!ImGui::ItemAdd(rowRect, rowItemId))
         {
@@ -1574,7 +1464,6 @@ namespace ui
             return out;
         }
 
-        // Check if mouse is in the right column area (where buttons/toggles are)
         float rightWidgetW = 170.0f;
         if (r.rightType == SettingRightType::Combo || r.rightType == SettingRightType::AnimatedCombo)
             rightWidgetW = ImMax(rightWidgetW, r.comboWidth + 20.0f);
@@ -1592,33 +1481,28 @@ namespace ui
         bool hovered = false, held = false;
         bool pressed = false;
 
-        // Only process row click if not clicking on interactive right elements
+        // don't eat clicks on interactive right-side controls
         if (!(hasInteractiveRight && mouseInRightCol))
         {
             pressed = ImGui::ButtonBehavior(rowRect, rowItemId, &hovered, &held);
         }
         else
         {
-            // Still check hover for visual feedback
             hovered = ImGui::IsMouseHoveringRect(rowRect.Min, rowRect.Max);
         }
 
-        // Background (only when selected, no hover effect)
         if (is_selected)
         {
             ImU32 bg = ImGui::GetColorU32(ImGuiCol_Header, 0.5f);
             ImGui::GetWindowDrawList()->AddRectFilled(rowRect.Min, rowRect.Max, bg, 0.0f);
         }
 
-        // Content padding inside row
         const float padX = 18.0f;
         const float padY = 10.0f;
         ImVec2 contentStart(rowRect.Min.x + padX, rowRect.Min.y + padY);
 
-        // We'll draw contents using a table for left/right alignment.
         ImGui::SetCursorScreenPos(contentStart);
 
-        // Track whether any widget on the right is interacted with
         bool rightHoveredOrActive = false;
 
         const float contentH = row_h - padY * 2.0f;
@@ -1630,14 +1514,12 @@ namespace ui
 
         if (ImGui::BeginTable("##row_tbl", 3, tf, ImVec2(fullW - padX * 2.0f, contentH)))
         {
-            // icon col fixed, text stretch, right fixed
             ImGui::TableSetupColumn("icon", ImGuiTableColumnFlags_WidthFixed, 26.0f);
             ImGui::TableSetupColumn("text", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("right", ImGuiTableColumnFlags_WidthFixed, 170.0f);
 
             ImGui::TableNextRow(ImGuiTableRowFlags_None, contentH);
 
-            // --- ICON ---
             ImGui::TableSetColumnIndex(0);
             if (r.leftIcon && r.leftIcon[0])
             {
@@ -1646,16 +1528,13 @@ namespace ui
                 ImGui::TextUnformatted(r.leftIcon);
             }
 
-            // --- TEXT ---
             ImGui::TableSetColumnIndex(1);
             {
-                // Calculate combined text height for vertical centering
                 float titleH = render::FontRegular ? render::FontRegular->LegacySize : ImGui::GetTextLineHeight();
                 float subH = (r.subtitle && r.subtitle[0] && render::FontSmall) ? render::FontSmall->LegacySize : 0.0f;
                 float spacing = (r.subtitle && r.subtitle[0]) ? ImGui::GetStyle().ItemSpacing.y : 0.0f;
                 float totalTextH = titleH + subH + spacing;
 
-                // Center vertically
                 float y = ImGui::GetCursorPosY();
                 float offset = (contentH - totalTextH) * 0.5f;
                 if (offset > 0) ImGui::SetCursorPosY(y + offset);
@@ -1675,14 +1554,11 @@ namespace ui
                 ImGui::EndGroup();
             }
 
-            // --- RIGHT ---
             ImGui::TableSetColumnIndex(2);
             {
-                // Right-align inside this column by measuring what we'll draw.
                 float colW = ImGui::GetColumnWidth();
                 float curX = ImGui::GetCursorPosX();
 
-                // approximate widths (good enough for “no design”)
                 float wantW = 0.0f;
                 switch (r.rightType)
                 {
@@ -1700,7 +1576,6 @@ namespace ui
                 if (wantW > 0.0f)
                     ImGui::SetCursorPosX(curX + (colW - wantW - 8.0f));
 
-                // Vertical center for right widget
                 float y = ImGui::GetCursorPosY();
                 ImGui::SetCursorPosY(y + (contentH - 28.0f) * 0.5f);
 
@@ -1780,7 +1655,6 @@ namespace ui
                 }
                 else if (r.rightType == SettingRightType::AnimatedCombo && r.comboItems && r.comboIndex)
                 {
-                    // Use screen coordinates for proper vertical centering
                     float comboX = rowRect.Max.x - padX - r.comboWidth - 8.0f;
                     float comboY = rowRect.Min.y + (row_h - r.comboHeight) * 0.5f;
                     ImGui::SetCursorScreenPos(ImVec2(comboX, comboY));
@@ -1795,7 +1669,6 @@ namespace ui
             ImGui::EndTable();
         }
 
-        // If user clicked the row, select it — but NOT if they were interacting with the right control.
         if (pressed && !rightHoveredOrActive)
         {
             if (selected_id)
@@ -1827,7 +1700,7 @@ namespace ui
         }
         ImGui::Dummy(ImVec2(0, 1));
 
-        // Record card top and split draw list for background behind content
+        // record top before content so EndCategoryCard can draw bg behind it
         s_cardStartPos = ImGui::GetCursorScreenPos();
         s_cardDL = ImGui::GetWindowDrawList();
         s_cardSplitter.Split(s_cardDL, 2);
@@ -1838,7 +1711,6 @@ namespace ui
     {
         ImGui::Dummy(ImVec2(0, 6));
 
-        // Draw background rect on channel 0 (behind content)
         float cardW = ImGui::GetContentRegionAvail().x - 6.0f;
         ImVec2 cardMax(s_cardStartPos.x + cardW, ImGui::GetCursorScreenPos().y);
         s_cardSplitter.SetCurrentChannel(s_cardDL, 0);
@@ -1856,10 +1728,9 @@ namespace ui
         ImVec2 a = ImGui::GetCursorScreenPos();
         float w = ImGui::GetContentRegionAvail().x - rightMargin;
 
-        // thin line (theme-aware)
         ImU32 divCol = IsDarkTheme() ? IM_COL32(255, 255, 255, 25) : IM_COL32(0, 0, 0, 30);
         dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x + w, a.y), divCol, 1.0f);
-        ImGui::Dummy(ImVec2(0, 4)); // spacing after divider
+        ImGui::Dummy(ImVec2(0, 4));
     }
 
     void DrawRowDivider()
@@ -1886,9 +1757,7 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = window->DrawList;
 
-        // ============================================================
-        // Split "Visible##ID" and ALWAYS build an ID-only label for ImGui
-        // ============================================================
+        // split "Visible##id" — pass only the ##id part to ImGui so it draws no right-side label
         const char* hash = strstr(label, "##");
 
         std::string visible;
@@ -1897,32 +1766,21 @@ namespace ui
 
         if (hash)
         {
-            // Visible part is before ##
             if (hash != label)
                 visible.assign(label, size_t(hash - label));
             else
                 visible.clear();
 
-            // ID-only label is "##id"
             id_label = hash;
-            if (visible.empty())
-            {
-                // If label is "##id" only, pick something to draw (optional)
-                // visible = ""; // leave empty
-            }
         }
         else
         {
-            // No "##" provided -> treat entire label as visible, but pass ID-only to ImGui
             visible = label;
             id_storage = "##";
             id_storage += label;
             id_label = id_storage.c_str();
         }
 
-        // ============================================================
-        // Layout
-        // ============================================================
         const float W = ImGui::CalcItemWidth();
         const float H = 28.0f;
 
@@ -1932,12 +1790,9 @@ namespace ui
         ImGui::Dummy(ImVec2(W, H));
         ImGui::SetCursorScreenPos(bb.Min);
 
-        // ============================================================
-        // State
-        // ============================================================
         ImGuiID id = window->GetID(id_label);
 
-        // Use window state storage to avoid memory leaks from static map
+        // window state storage avoids memory leaks from static maps
         ImGuiStorage* storage = window->DC.StateStorage;
         const ImGuiID t_id = id + 1;
         const ImGuiID glow_id = id + 2;
@@ -1946,32 +1801,23 @@ namespace ui
         
         bool has_text = (buf && buf[0] != '\0');
 
-        // ============================================================
-        // Input (borderless)
-        // ============================================================
         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
         ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(0, 0, 0, 0));
 
-        // ============================================================
-        // Hard safety net: never let ImGui see null/zero buffers
-        // ============================================================
+        // guard against null/zero buf — ImGui will crash without this
         if (!buf || buf_size < 2)
         {
             IM_ASSERT(false && "InputText3 called with invalid buf/buf_size. Set a breakpoint here.");
-
-            // Optional: debug print once
-            // IMGUI_DEBUG_LOG("InputText3 bad buffer: label=%s buf=%p buf_size=%llu\n", label, buf, (unsigned long long)buf_size);
-
-            static char s_fallback[2] = { 0, 0 }; // always valid: "" + terminator
+            static char s_fallback[2] = { 0, 0 };
             buf = s_fallback;
             buf_size = 2;
         }
 
         bool changed = ImGui::InputTextEx(
-            id_label,            // IMPORTANT: ID-only, so ImGui draws NO right-side label
-            nullptr,             // no hint
+            id_label,  // ID-only: no right-side label rendered by ImGui
+            nullptr,
             buf,
             (int)buf_size,
             ImVec2(W, H),
@@ -1986,9 +1832,6 @@ namespace ui
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar();
 
-        // ============================================================
-        // Clear button (x) at far right, inside field above underline
-        // ============================================================
         if (has_text)
         {
             const float underlineY = bb.Max.y - 8.0f;
@@ -2025,9 +1868,6 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // Animate floating + glow
-        // ============================================================
         float float_target = (active || hovered || has_text) ? 1.0f : 0.0f;
         t = ImLerp(t, float_target, io.DeltaTime * 12.0f);
 
@@ -2037,9 +1877,6 @@ namespace ui
         storage->SetFloat(t_id, t);
         storage->SetFloat(glow_id, glow);
 
-        // ============================================================
-        // Floating label (we draw it)
-        // ============================================================
         if (!visible.empty())
         {
             const float inside_y = bb.Min.y + (H - ImGui::GetTextLineHeight()) * 0.5f;
@@ -2057,11 +1894,8 @@ namespace ui
                 visible.c_str());
         }
 
-        // ============================================================
-        // Underline (fixed + subtle glow)
-        // ============================================================
-        ImVec2 a(bb.Min.x + 2.0f, bb.Max.y - 8.0f); // wasbb.Max.y - 3.0f
-        ImVec2 b(bb.Max.x - 2.0f, bb.Max.y - 8.0f); // wasbb.Max.y - 3.0f
+        ImVec2 a(bb.Min.x + 2.0f, bb.Max.y - 8.0f); // was -3.0f
+        ImVec2 b(bb.Max.x - 2.0f, bb.Max.y - 8.0f);
 
         ImVec4 underlineCol = IsDarkTheme() ? ImVec4(1, 1, 1, 0.25f) : ImVec4(0, 0, 0, 0.20f);
         dl->AddLine(a, b, ImGui::GetColorU32(underlineCol), 1.0f);
@@ -2092,9 +1926,7 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = window->DrawList;
 
-        // ============================================================
-        // Split "Visible##ID" and ALWAYS build an ID-only label for ImGui
-        // ============================================================
+        // split "Visible##id" — same pattern as InputText3
         const char* hash = strstr(label, "##");
 
         std::string visible;
@@ -2118,33 +1950,24 @@ namespace ui
             id_label = id_storage.c_str();
         }
 
-        // ============================================================
-        // Layout
-        // ============================================================
         const float W = ImGui::CalcItemWidth();
         const float fieldH = 34.0f;
         const float rounding = 6.0f;
         const float labelFontScale = 0.82f;
         const float labelH = ImGui::GetFontSize() * labelFontScale;
         const float labelPadTop = 2.0f;
-        // Total height: space for floated label above + field
         const float totalH = labelH + labelPadTop + fieldH;
 
         ImVec2 pos = window->DC.CursorPos;
-        // The field box (excludes the floating label area above)
         ImRect fieldBB(ImVec2(pos.x, pos.y + labelH + labelPadTop),
                        ImVec2(pos.x + W, pos.y + totalH));
 
-        // Wrap in a group so EndGroup registers the full widget bounds,
-        // preventing InputTextEx from overwriting line tracking (fixes SameLine).
+        // BeginGroup so EndGroup registers full widget bounds — prevents InputTextEx
+        // from overwriting line tracking (fixes SameLine after this widget)
         ImGui::BeginGroup();
         ImGui::Dummy(ImVec2(W, totalH));
 
-        // ============================================================
-        // State
-        // ============================================================
         ImGuiID id = window->GetID(id_label);
-
         ImGuiStorage* storage = window->DC.StateStorage;
         const ImGuiID t_id = id + 1;
         const ImGuiID glow_id = id + 2;
@@ -2153,12 +1976,9 @@ namespace ui
 
         bool has_text = (buf && buf[0] != '\0');
 
-        // ============================================================
-        // Draw field background + outline (behind ImGui input)
-        // ============================================================
         bool dark = IsDarkTheme();
 
-        // Lift shadow (leaning right, beneath field)
+        // lift shadow — slightly right-biased for depth
         {
             float rightBias = 1.0f;
             float shadowOff = 1.0f;
@@ -2169,32 +1989,27 @@ namespace ui
                 s1, rounding);
         }
 
-        // Background: slightly offset from window bg
-        ImU32 fieldBg = dark ? theme::PanelBg.dark    // slightly above window bg
-                             : theme::PanelBg.light; // subtle tint below white
+        ImU32 fieldBg = dark ? theme::PanelBg.dark : theme::PanelBg.light;
 
         dl->AddRectFilled(fieldBB.Min, fieldBB.Max, fieldBg, rounding);
 
-        // Top-left shine (inner highlight with curved corner)
+        // top-left inner shine: left edge + arc + top edge
         {
             ImU32 shineCol = dark ? IM_COL32(255, 255, 255, 8) : IM_COL32(255, 255, 255, 180);
             ImU32 sideCol  = dark ? IM_COL32(255, 255, 255, 5) : IM_COL32(255, 255, 255, 100);
             float inset = 1.5f;
             float r = rounding - inset;
-            // Left edge (bottom to corner)
             dl->PathLineTo(ImVec2(fieldBB.Min.x + inset, fieldBB.Max.y - rounding));
             dl->PathLineTo(ImVec2(fieldBB.Min.x + inset, fieldBB.Min.y + rounding));
             dl->PathStroke(sideCol, 0, 1.0f);
-            // Top-left corner arc
             dl->PathArcTo(ImVec2(fieldBB.Min.x + rounding, fieldBB.Min.y + rounding), r, IM_PI, IM_PI * 1.5f, 8);
             dl->PathStroke(shineCol, 0, 1.0f);
-            // Top edge (corner to right)
             dl->PathLineTo(ImVec2(fieldBB.Min.x + rounding, fieldBB.Min.y + inset));
             dl->PathLineTo(ImVec2(fieldBB.Max.x - rounding, fieldBB.Min.y + inset));
             dl->PathStroke(shineCol, 0, 1.0f);
         }
 
-        // Outline: subtle at rest, accent on focus
+        // outline: subtle at rest, accent on focus
         ImVec4 borderRest = dark ? ImVec4(1, 1, 1, 0.14f) : ImVec4(0, 0, 0, 0.18f);
         ImVec4 borderFocus = ImVec4(colors::SecondColor.x, colors::SecondColor.y,
                                     colors::SecondColor.z, 0.85f);
@@ -2203,7 +2018,6 @@ namespace ui
         dl->AddRect(fieldBB.Min, fieldBB.Max,
                     ImGui::GetColorU32(borderCol), rounding, 0, borderThickness);
 
-        // Subtle outer glow on focus
         if (glow > 0.01f)
         {
             ImVec4 outerGlow = ImVec4(colors::SecondColor.x, colors::SecondColor.y,
@@ -2213,9 +2027,6 @@ namespace ui
                         ImGui::GetColorU32(outerGlow), rounding + 1, 0, 2.0f);
         }
 
-        // ============================================================
-        // Input (transparent frame — we draw our own bg/border)
-        // ============================================================
         const float textPadX = 10.0f;
         ImGui::SetCursorScreenPos(ImVec2(fieldBB.Min.x + textPadX,
                                          fieldBB.Min.y));
@@ -2228,7 +2039,6 @@ namespace ui
         ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_FrameBgActive, IM_COL32(0, 0, 0, 0));
 
-        // Hard safety net
         if (!buf || buf_size < 2)
         {
             IM_ASSERT(false && "InputText4 called with invalid buf/buf_size.");
@@ -2237,8 +2047,7 @@ namespace ui
             buf_size = 2;
         }
 
-        // Leave room for clear button on the right
-        float inputW = W - textPadX * 2 - (has_text ? 20.0f : 0.0f);
+        float inputW = W - textPadX * 2 - (has_text ? 20.0f : 0.0f); // reserve room for clear btn
 
         bool changed = ImGui::InputTextEx(
             id_label,
@@ -2257,9 +2066,6 @@ namespace ui
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar(3);
 
-        // ============================================================
-        // Right-click context menu
-        // ============================================================
         {
             char ctx_id[64];
             snprintf(ctx_id, sizeof(ctx_id), "##input4_ctx_%u", id);
@@ -2296,7 +2102,7 @@ namespace ui
                     g_show_osk = !g_show_osk;
                 }
 
-                // Gradient border
+                // gradient border on popup window
                 {
                     const float r = 8.0f;
                     ImVec2 pMin = ImGui::GetWindowPos();
@@ -2306,27 +2112,22 @@ namespace ui
                     ImU32 colBR = theme::BevelBR;
                     ImU32 colTR = theme::BevelTR;
                     ImU32 colBL = theme::BevelBL;
-                    // Top edge
                     pdl->AddRectFilledMultiColor(
                         ImVec2(pMin.x + r, pMin.y),
                         ImVec2(pMax.x - r, pMin.y + 1.0f),
                         colTL, colBR, colBR, colTL);
-                    // Bottom edge
                     pdl->AddRectFilled(
                         ImVec2(pMin.x + r, pMax.y - 1.0f),
                         ImVec2(pMax.x - r, pMax.y),
                         colBR);
-                    // Left edge
                     pdl->AddRectFilledMultiColor(
                         ImVec2(pMin.x, pMin.y + r),
                         ImVec2(pMin.x + 1.0f, pMax.y - r),
                         colTL, colTL, colBR, colBR);
-                    // Right edge
                     pdl->AddRectFilledMultiColor(
                         ImVec2(pMax.x - 1.0f, pMin.y + r),
                         ImVec2(pMax.x, pMax.y - r),
                         colBR, colBR, colBR, colBR);
-                    // Corner arcs
                     float cr = r - 0.5f;
                     pdl->PathArcTo(ImVec2(pMin.x + r, pMin.y + r), cr, IM_PI, IM_PI * 1.5f, 8);
                     pdl->PathStroke(colTL, 0, 1.0f);
@@ -2343,9 +2144,6 @@ namespace ui
             ImGui::PopStyleVar(4);
         }
 
-        // ============================================================
-        // Clear button (x) inside field, right side
-        // ============================================================
         if (has_text)
         {
             const float clearSz = 18.0f;
@@ -2382,9 +2180,6 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // Animate float + glow
-        // ============================================================
         float float_target = (active || hovered || has_text) ? 1.0f : 0.0f;
         t = ImLerp(t, float_target, io.DeltaTime * 12.0f);
 
@@ -2394,15 +2189,10 @@ namespace ui
         storage->SetFloat(t_id, t);
         storage->SetFloat(glow_id, glow);
 
-        // ============================================================
-        // Floating label — sits inside field at rest, floats above
-        // the top border when active/has text
-        // ============================================================
+        // floating label: centered inside at rest, floats above border when active/filled
         if (!visible.empty())
         {
-            // Inside: vertically centered in field
             const float inside_y = fieldBB.Min.y + (fieldH - ImGui::GetTextLineHeight()) * 0.5f;
-            // Outside: above the field, aligned to top edge of border
             const float outside_y = fieldBB.Min.y - labelH - 2.0f;
 
             float label_y = ImLerp(inside_y, outside_y, t);
@@ -2441,8 +2231,7 @@ namespace ui
 
         std::string* str = ud->Str;
 
-        // ImGui requests BufSize bytes INCLUDING null terminator.
-        // Make sure our capacity can hold it, but keep string size == actual text length.
+        // BufSize includes null terminator; keep string size == actual text length
         str->reserve((size_t)data->BufSize);
         str->resize((size_t)data->BufTextLen);
 
@@ -2450,24 +2239,18 @@ namespace ui
         return 0;
     }
 
-    // ============================================================
-    // Single-line std::string wrapper
-    // ============================================================
     bool InputTextString(const char* label, std::string* str, ImGuiInputTextFlags flags)
     {
         IM_ASSERT(str);
 
         flags |= ImGuiInputTextFlags_CallbackResize;
 
-        // HARD guarantee: capacity >= 2
         if (str->capacity() < 2)
             str->reserve(64);
-
         if (str->capacity() < 2)
-            str->reserve(2); // absolute fallback
+            str->reserve(2);
 
-        // Make writable buffer: size == capacity - 1 (leave room for null)
-        // This ensures buf_size == size + 1 is ALWAYS >= 2.
+        // size = capacity-1 so buf_size = size+1 >= 2 always
         str->resize(str->capacity() - 1);
 
         InputTextStringUserData ud;
@@ -2492,7 +2275,7 @@ namespace ui
         return changed;
     }
 
-    // SearchableCombo — plain input field with filtered item list
+    // plain input + chevron button that opens a filtered item list
     bool SearchableCombo(const char* label, std::string& value,
                          const std::vector<std::string>& items,
                          const std::unordered_map<std::string, int>* counts,
@@ -2503,14 +2286,13 @@ namespace ui
         const float btnSz = 34.0f; // match InputText4 field height
         const float gap = 4.0f;
 
-        // Input field (InputText4 floating label from text before ##)
         float totalW = ImGui::CalcItemWidth();
         ImGui::SetNextItemWidth(totalW - btnSz - gap);
         InputTextString(label, &value);
         if (ImGui::IsItemDeactivatedAfterEdit())
             changed = true;
 
-        // Dropdown button — aligned to InputText4's field box (skip floating label)
+        // align button to InputText4's field box, skipping the floating label area
         ImGui::SameLine(0, gap);
         float labelAreaH = ImGui::GetFontSize() * 0.82f + 2.0f;
         float savedY = ImGui::GetCursorPosY();
@@ -2520,7 +2302,6 @@ namespace ui
         if (IconButtonSquare2("sc_btn", ICON_MDI_CHEVRON_DOWN, btnSz))
             ImGui::OpenPopup("##sc_pick");
 
-        // Popup with selectable items
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
@@ -2559,10 +2340,6 @@ namespace ui
         return changed;
     }
 
-    // ============================================================
-    // Formatted input masking (digits + pattern separators)
-    // ============================================================
-
     std::string StripNonDigits(const std::string& s)
     {
         std::string out;
@@ -2597,7 +2374,6 @@ namespace ui
     {
         auto* ud = (InputTextFormattedUserData*)data->UserData;
 
-        // --- Resize ---
         if (data->EventFlag == ImGuiInputTextFlags_CallbackResize)
         {
             std::string* str = ud->Str;
@@ -2607,53 +2383,43 @@ namespace ui
             return 0;
         }
 
-        // --- Char filter: reject non-digits ---
         if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter)
         {
             if (data->EventChar < '0' || data->EventChar > '9')
-                return 1; // reject
+                return 1; // block non-digits
             return 0;
         }
 
-        // --- Edit: reformat buffer ---
         if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit)
         {
             const char* pattern = ud->Pattern;
 
-            // Count max digits allowed by pattern
-            int maxDigits = 0;
+            int maxDigits = 0; // '#' chars in pattern
             for (const char* p = pattern; *p; ++p)
                 if (*p == '#') ++maxDigits;
 
-            // Extract current buffer text
             std::string current(data->Buf, (size_t)data->BufTextLen);
 
-            // Count digits before cursor in old buffer
-            int digitsBefore = 0;
+            int digitsBefore = 0; // digits before cursor, used to reposition after reformat
             for (int i = 0; i < data->CursorPos && i < (int)current.size(); ++i)
                 if (current[i] >= '0' && current[i] <= '9')
                     ++digitsBefore;
 
-            // Strip to raw digits
             std::string digits = StripNonDigits(current);
 
-            // Backspace-through-separator detection:
-            // If digit count didn't change but buffer changed, user deleted a separator.
-            // Remove the digit just before cursor to make backspace feel natural.
+            // if digit count didn't change, user deleted a separator — eat the digit before cursor
             if ((int)digits.size() == ud->PrevDigitCount && (int)digits.size() > 0 && digitsBefore > 0)
             {
                 digits.erase((size_t)digitsBefore - 1, 1);
                 --digitsBefore;
             }
 
-            // Clamp to max
             if ((int)digits.size() > maxDigits)
                 digits.resize((size_t)maxDigits);
 
-            // Rebuild formatted string
             std::string formatted = FormatWithPattern(digits, pattern);
 
-            // Find new cursor: walk formatted string until we've seen digitsBefore digits
+            // walk formatted string until we've counted digitsBefore digits, place cursor after
             int newCursor = (int)formatted.size(); // default: end
             int seen = 0;
             for (int i = 0; i < (int)formatted.size(); ++i)
@@ -2664,7 +2430,7 @@ namespace ui
                     if (seen == digitsBefore)
                     {
                         newCursor = i + 1;
-                        // Skip trailing separators so cursor lands after them
+                        // skip trailing separators
                         while (newCursor < (int)formatted.size() &&
                                !(formatted[newCursor] >= '0' && formatted[newCursor] <= '9'))
                             ++newCursor;
@@ -2675,17 +2441,13 @@ namespace ui
             if (digitsBefore == 0)
                 newCursor = 0;
 
-            // Update prev digit count
             ud->PrevDigitCount = (int)digits.size();
 
-            // Write back
             int len = (int)formatted.size();
             memcpy(data->Buf, formatted.c_str(), (size_t)len + 1);
             data->BufTextLen = len;
             data->BufDirty   = true;
             data->CursorPos  = newCursor;
-
-            // Also update the std::string
             *ud->Str = formatted;
         }
 
@@ -2700,7 +2462,6 @@ namespace ui
               |  ImGuiInputTextFlags_CallbackCharFilter
               |  ImGuiInputTextFlags_CallbackEdit;
 
-        // Same buffer setup as InputTextString
         if (str->capacity() < 2)
             str->reserve(64);
         if (str->capacity() < 2)
@@ -2708,9 +2469,8 @@ namespace ui
 
         str->resize(str->capacity() - 1);
 
-        // Per-widget state for backspace detection
         ImGuiID id = ImGui::GetID(label);
-        static std::unordered_map<ImGuiID, int> s_prev_digits;
+        static std::unordered_map<ImGuiID, int> s_prev_digits; // per-widget backspace detection
         int& prevDigits = s_prev_digits[id];
 
         InputTextFormattedUserData ud;
@@ -2738,9 +2498,6 @@ namespace ui
         return changed;
     }
 
-    // ============================================================
-    // Multiline std::string wrapper
-    // ============================================================
     bool InputTextMultilineString(const char* label, std::string* str, const ImVec2& size, ImGuiInputTextFlags flags)
     {
         IM_ASSERT(str);
@@ -2777,9 +2534,7 @@ namespace ui
         return changed;
     }
 
-    // ============================================================
-    // Password input with brief last-char reveal (mobile-style)
-    // ============================================================
+    // bullet-masked input with brief last-char reveal; cursor drawn manually
     bool InputTextPasswordReveal(const char* label, std::string* str, ImGuiInputTextFlags extra_flags, float reveal_duration_ms)
     {
         IM_ASSERT(str);
@@ -2790,9 +2545,6 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = window->DrawList;
 
-        // ============================================================
-        // Split "Visible##ID" for floating label
-        // ============================================================
         const char* hash = strstr(label, "##");
         std::string visible;
         std::string id_storage;
@@ -2812,9 +2564,6 @@ namespace ui
             id_label = id_storage.c_str();
         }
 
-        // ============================================================
-        // Layout (matches InputText4 dimensions)
-        // ============================================================
         const float W = ImGui::CalcItemWidth();
         const float fieldH = 34.0f;
         const float rounding = 6.0f;
@@ -2831,9 +2580,6 @@ namespace ui
         ImGui::BeginGroup();
         ImGui::Dummy(ImVec2(W, totalH));
 
-        // ============================================================
-        // State storage (animation + reveal tracking)
-        // ============================================================
         ImGuiID id = window->GetID(id_label);
         ImGuiStorage* storage = window->DC.StateStorage;
 
@@ -2849,9 +2595,6 @@ namespace ui
         float reveal_time = storage->GetFloat(reveal_time_id, -1000.0f);
         int reveal_pos = storage->GetInt(reveal_pos_id, -1);
 
-        // ============================================================
-        // Prepare string buffer
-        // ============================================================
         if (str->capacity() < 2)
             str->reserve(64);
         if (str->capacity() < 2)
@@ -2864,13 +2607,9 @@ namespace ui
         char* buf = (char*)str->data();
         int buf_size = (int)str->size() + 1;
 
-        // ============================================================
-        // Draw field background + outline (behind ImGui input)
-        // ============================================================
         bool dark = IsDarkTheme();
 
-        ImU32 fieldBg = dark ? theme::PanelBg.dark
-                             : theme::PanelBg.light;
+        ImU32 fieldBg = dark ? theme::PanelBg.dark : theme::PanelBg.light;
         dl->AddRectFilled(fieldBB.Min, fieldBB.Max, fieldBg, rounding);
 
         ImVec4 borderRest = dark ? ImVec4(1, 1, 1, 0.14f) : ImVec4(0, 0, 0, 0.18f);
@@ -2890,9 +2629,7 @@ namespace ui
                         ImGui::GetColorU32(outerGlow), rounding + 1, 0, 2.0f);
         }
 
-        // ============================================================
-        // Input (transparent frame + invisible text — we draw our own)
-        // ============================================================
+        // transparent frame + text hidden — we draw masked text manually below
         ImGui::SetCursorScreenPos(ImVec2(fieldBB.Min.x + textPadX, fieldBB.Min.y));
 
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
@@ -2930,9 +2667,6 @@ namespace ui
         int cur_len = (int)str->length();
         bool has_text = cur_len > 0;
 
-        // ============================================================
-        // Right-click context menu
-        // ============================================================
         {
             char ctx_id[64];
             snprintf(ctx_id, sizeof(ctx_id), "##inputpw_ctx_%u", id);
@@ -2961,7 +2695,7 @@ namespace ui
                     g_show_osk = !g_show_osk;
                 }
 
-                // Gradient border
+                // gradient border on popup window
                 {
                     const float r = 8.0f;
                     ImVec2 pMin = ImGui::GetWindowPos();
@@ -2971,27 +2705,22 @@ namespace ui
                     ImU32 colBR = theme::BevelBR;
                     ImU32 colTR = theme::BevelTR;
                     ImU32 colBL = theme::BevelBL;
-                    // Top edge
                     pdl->AddRectFilledMultiColor(
                         ImVec2(pMin.x + r, pMin.y),
                         ImVec2(pMax.x - r, pMin.y + 1.0f),
                         colTL, colBR, colBR, colTL);
-                    // Bottom edge
                     pdl->AddRectFilled(
                         ImVec2(pMin.x + r, pMax.y - 1.0f),
                         ImVec2(pMax.x - r, pMax.y),
                         colBR);
-                    // Left edge
                     pdl->AddRectFilledMultiColor(
                         ImVec2(pMin.x, pMin.y + r),
                         ImVec2(pMin.x + 1.0f, pMax.y - r),
                         colTL, colTL, colBR, colBR);
-                    // Right edge
                     pdl->AddRectFilledMultiColor(
                         ImVec2(pMax.x - 1.0f, pMin.y + r),
                         ImVec2(pMax.x, pMax.y - r),
                         colBR, colBR, colBR, colBR);
-                    // Corner arcs
                     float cr = r - 0.5f;
                     pdl->PathArcTo(ImVec2(pMin.x + r, pMin.y + r), cr, IM_PI, IM_PI * 1.5f, 8);
                     pdl->PathStroke(colTL, 0, 1.0f);
@@ -3008,9 +2737,6 @@ namespace ui
             ImGui::PopStyleVar(4);
         }
 
-        // ============================================================
-        // Clear button (x) inside field, right side
-        // ============================================================
         if (has_text)
         {
             const float clearSz = 18.0f;
@@ -3046,24 +2772,18 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // Detect new character typed (length increased)
-        // ============================================================
         float now = (float)ImGui::GetTime();
         if (cur_len > prev_len && active)
         {
             reveal_pos = cur_len - 1;
             while (reveal_pos > 0 && ((*str)[reveal_pos] & 0xC0) == 0x80)
-                reveal_pos--;
+                reveal_pos--; // walk back to start of UTF-8 codepoint
             reveal_time = now;
         }
         storage->SetInt(prev_len_id, cur_len);
         storage->SetFloat(reveal_time_id, reveal_time);
         storage->SetInt(reveal_pos_id, reveal_pos);
 
-        // ============================================================
-        // Build masked display string
-        // ============================================================
         std::string masked;
         if (has_text)
         {
@@ -3084,16 +2804,13 @@ namespace ui
                 if (revealing && byte_idx == reveal_pos)
                     masked.append(p, cp_len);
                 else
-                    masked.append("\xe2\x80\xa2");
+                    masked.append("\xe2\x80\xa2"); // bullet U+2022
 
                 p += cp_len;
                 byte_idx += cp_len;
             }
         }
 
-        // ============================================================
-        // Draw masked text + custom cursor
-        // ============================================================
         {
             float text_x = fieldBB.Min.x + textPadX;
             float text_y = fieldBB.Min.y + (fieldH - ImGui::GetTextLineHeight()) * 0.5f;
@@ -3159,9 +2876,6 @@ namespace ui
             }
         }
 
-        // ============================================================
-        // Animate floating label + glow
-        // ============================================================
         float float_target = (active || hovered || has_text) ? 1.0f : 0.0f;
         t = ImLerp(t, float_target, io.DeltaTime * 12.0f);
 
@@ -3171,7 +2885,6 @@ namespace ui
         storage->SetFloat(t_id, t);
         storage->SetFloat(glow_id, glow);
 
-        // Floating label — above the top border
         if (!visible.empty())
         {
             const float inside_y = fieldBB.Min.y + (fieldH - ImGui::GetTextLineHeight()) * 0.5f;
@@ -3278,7 +2991,7 @@ namespace ui
         const float rounding = 8.0f;
         const bool dark = IsDarkTheme();
 
-        // Match InputText4 field bg so buttons sit flush in light mode
+        // same bg as InputText4 field so buttons sit flush in light mode
         ImVec4 col_bg   = dark ? ImVec4(0.15f, 0.15f, 0.16f, 1.00f) : ImVec4(248/255.0f, 248/255.0f, 250/255.0f, 1.00f);
         ImVec4 col_hov  = dark ? ImVec4(0.20f, 0.20f, 0.22f, 1.00f) : ImVec4(240/255.0f, 240/255.0f, 243/255.0f, 1.00f);
         ImVec4 col_act  = dark ? ImVec4(0.24f, 0.24f, 0.26f, 1.00f) : ImVec4(232/255.0f, 232/255.0f, 236/255.0f, 1.00f);
@@ -3350,7 +3063,6 @@ namespace ui
         return pressed && enabled;
     }
 
-    // IconButtonDoubleLip — IconSoftDoubleLip style from custom_imgui_widgets
     bool IconButtonDoubleLip(const char* id, const char* glyph, float size)
     {
         ImGui::PushID(id);
@@ -3358,7 +3070,6 @@ namespace ui
         const bool dark = g_shell_ptr ? g_shell_ptr->dark_theme : true;
         const float rounding = 9.0f;
 
-        // Theme tokens (matching custom_imgui_widgets IconSoftDoubleLip)
         const ImVec4 bg     = dark ? ImVec4(0.14f, 0.14f, 0.15f, 1.0f) : ImVec4(0.91f, 0.91f, 0.92f, 1.0f);
         const ImVec4 bgHov  = dark ? ImVec4(0.17f, 0.17f, 0.18f, 1.0f) : ImVec4(0.86f, 0.86f, 0.87f, 1.0f);
         const ImVec4 bgAct  = dark ? ImVec4(0.12f, 0.12f, 0.13f, 1.0f) : ImVec4(0.82f, 0.82f, 0.83f, 1.0f);
@@ -3373,10 +3084,7 @@ namespace ui
         ImVec2 bMin = pos;
         ImVec2 bMax(pos.x + size, pos.y + size);
 
-        // Pick bg color
         ImVec4 bgCol = active ? bgAct : (hovered ? bgHov : bg);
-
-        // Inset panel colors (lighter inner rect)
         auto Clamp01 = [](float v) { return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v); };
         auto Lighten = [&](const ImVec4& c, float amt) {
             return ImVec4(Clamp01(c.x + amt), Clamp01(c.y + amt), Clamp01(c.z + amt), c.w);
@@ -3389,15 +3097,13 @@ namespace ui
         ImVec4 lipCol = Darken(bgAct, 0.15f);
         lipCol.w = 0.32f;
 
-        // Draw lips behind main rect using splitter
         ImDrawListSplitter splitter;
         splitter.Split(dl, 2);
         splitter.SetCurrentChannel(dl, 1);
 
-        // Main background
         dl->AddRectFilled(bMin, bMax, ImGui::ColorConvertFloat4ToU32(bgCol), rounding);
 
-        // Bottom lip
+        // bottom lip
         splitter.SetCurrentChannel(dl, 0);
         float clipTop = bMin.y + (size * 0.62f);
         dl->PushClipRect(ImVec2(bMin.x - 3.0f, clipTop), ImVec2(bMax.x + 3.0f, bMax.y + lipOff + 2.0f), true);
@@ -3405,7 +3111,7 @@ namespace ui
             ImGui::ColorConvertFloat4ToU32(lipCol), rounding);
         dl->PopClipRect();
 
-        // Right lip
+        // right lip
         float clipLeft = bMin.x + (size * 0.40f);
         dl->PushClipRect(ImVec2(clipLeft, bMin.y - 1.0f), ImVec2(bMax.x + lipOff + 2.0f, bMax.y + 1.0f), true);
         dl->AddRectFilled(ImVec2(bMin.x + lipOff, bMin.y), ImVec2(bMax.x + lipOff, bMax.y),
@@ -3414,7 +3120,7 @@ namespace ui
 
         splitter.SetCurrentChannel(dl, 1);
 
-        // Inset panel (lighter inner rect)
+        // inset panel — slightly lighter, creates the double-lip look
         float insetX = 1.0f, insetTop = 1.0f, insetBot = 2.2f;
         ImVec4 panelCol = Lighten(bgCol, active ? 0.05f : (hovered ? 0.07f : 0.06f));
         ImVec2 iMin(bMin.x + insetX, bMin.y + insetTop);
@@ -3423,7 +3129,6 @@ namespace ui
         {
             dl->AddRectFilled(iMin, iMax, ImGui::ColorConvertFloat4ToU32(panelCol), rounding - 2.0f);
 
-            // Icon centered in inset panel
             ImVec2 ts = ImGui::CalcTextSize(glyph);
             ImVec2 tp(iMin.x + (iMax.x - iMin.x - ts.x) * 0.5f,
                       iMin.y + (iMax.y - iMin.y - ts.y) * 0.5f + 2.0f);
@@ -3450,7 +3155,6 @@ namespace ui
         ImVec2 clipMin = p;
         ImVec2 clipMax = ImVec2(p.x + max_w, p.y + ImGui::GetTextLineHeight());
 
-        // If it fits, draw normally.
         ImVec2 tsz = ImGui::CalcTextSize(text);
         if (tsz.x <= max_w)
         {
@@ -3458,7 +3162,6 @@ namespace ui
             return;
         }
 
-        // Draw clipped text — clip earlier to leave room for dots
         const char* dots = "...";
         ImVec2 dsz = ImGui::CalcTextSize(dots);
         ImVec2 textClipMax = ImVec2(p.x + max_w - dsz.x, clipMax.y);
@@ -3466,13 +3169,10 @@ namespace ui
         dl->AddText(p, ImGui::GetColorU32(ImGuiCol_Text), text);
         dl->PopClipRect();
 
-        // Draw "..." right after the clipped text
         dl->AddText(ImVec2(textClipMax.x, p.y), ImGui::GetColorU32(ImGuiCol_TextDisabled), dots);
 
-        // Advance cursor as if we printed a line
         ImGui::Dummy(ImVec2(max_w, ImGui::GetTextLineHeight()));
 
-        // Tooltip with full text
         if (ImGui::IsItemHovered())
             SetTooltipPadded("%s", text);
     }
@@ -3663,7 +3363,6 @@ namespace ui
         ImGui::PopStyleColor(3);
         ImGui::PopID();
 
-        // underline
         if (!anim.init)
         {
             anim.x = targetX;
@@ -3691,8 +3390,6 @@ namespace ui
 
     // PillTabsAnim defined in ui_internal.h
 
-    // Simple button-based tabs matching Sort/View dropdown style
-    // right_clicked_tab: if non-null, set to index of right-clicked tab (-1 if none)
     bool PillTabs(const char* id,
         const char* const* labels, int labelCount,
         int& activeIndex,
@@ -3727,7 +3424,6 @@ namespace ui
             }
 			ImGui::PopStyleVar();
 
-            // Detect right-click on this tab
             if (right_clicked_tab && ImGui::IsItemClicked(ImGuiMouseButton_Right))
                 *right_clicked_tab = i;
 
@@ -3919,15 +3615,11 @@ namespace ui
     }
 
 
-    // ============================================================
-    // Scope label helper (multi-select)
-    // ============================================================
     const char* GetScopePreviewLabel(const std::set<std::string>& selected)
     {
         static char buf[64];
         if (selected.empty()) return "Filter";
 
-        // Count types vs groups
         int types = 0, groups = 0;
         for (const auto& s : selected) {
             if (!s.empty() && s[0] == '@') types++;
@@ -3937,7 +3629,7 @@ namespace ui
         if (selected.size() == 1) {
             const std::string& s = *selected.begin();
             if (!s.empty() && s[0] == '@')
-                return s.c_str() + 1; // strip '@' for display
+                return s.c_str() + 1; // skip '@'
             return s.c_str();
         }
 
@@ -3978,7 +3670,6 @@ namespace ui
 
         helpers::PwStrength s = helpers::analyze_password(pw);
 
-        // Count issues for strength label
         int issues = 0;
         if (s.shortPwd) issues++;
         if (s.allSame) issues++;
@@ -3990,7 +3681,6 @@ namespace ui
         if (!s.hasDigit) issues++;
         if (!s.hasSymbol) issues++;
 
-        // Map issue count to bars + label
         int numBars;
         const char* lbl;
         if (issues >= 4)       { numBars = 1; lbl = "Very Weak"; }
@@ -4001,14 +3691,13 @@ namespace ui
 
         ImU32 lblColor = (ImU32)helpers::strength_color(s.score);
 
-        // Single hue based on issue count
         ImVec4 baseCol;
         if (issues >= 4)       baseCol = ImVec4(220/255.f,  50/255.f,  47/255.f, 1.0f); // red
         else if (issues == 3)  baseCol = ImVec4(230/255.f, 160/255.f,  30/255.f, 1.0f); // orange
         else if (issues == 2)  baseCol = ImVec4(160/255.f, 200/255.f,  50/255.f, 1.0f); // yellow-green
         else                   baseCol = ImVec4( 60/255.f, 180/255.f,  75/255.f, 1.0f); // green
 
-        // Build segment colors: ramp brightness from dim to full
+        // ramp brightness dim→full across filled segments
         ImU32 segColors[4];
         for (int i = 0; i < 4; i++)
         {
@@ -4020,20 +3709,16 @@ namespace ui
                 (int)(baseCol.z * brightness * 255), 255);
         }
 
-        // Build checklist entries
         struct CheckItem { bool pass; const char* text; };
         std::vector<CheckItem> checks;
         bool hasWarnings = false;
-        // Length
         if (s.shortPwd)       { checks.push_back({false, "Too short (min 8 characters)"}); hasWarnings = true; }
         else                    checks.push_back({true,  "Length (8+ characters)"});
-        // Patterns & dictionary
         if (s.isCommonPwd)    { checks.push_back({false, "Common password"}); hasWarnings = true; }
         if (s.isDictWord)     { checks.push_back({false, "Contains common word or name"}); hasWarnings = true; }
         if (s.allSame)        { checks.push_back({false, "All characters are the same"}); hasWarnings = true; }
         if (s.repeatedPattern){ checks.push_back({false, "Repeated pattern detected"}); hasWarnings = true; }
         if (s.tooSequential)  { checks.push_back({false, "Sequential characters (abc, 123)"}); hasWarnings = true; }
-        // Character classes
         if (s.hasUpper)         checks.push_back({true,  "Uppercase letters"});
         else                  { checks.push_back({false, "No uppercase letters"}); hasWarnings = true; }
         if (s.hasLower)         checks.push_back({true,  "Lowercase letters"});
@@ -4043,7 +3728,6 @@ namespace ui
         if (s.hasSymbol)        checks.push_back({true,  "Special characters"});
         else                  { checks.push_back({false, "No special characters (!@#$...)"}); hasWarnings = true; }
 
-        // Warning icon — check for Very Strong (1 issue) and Excellent (0 issues)
         const char* warnIcon = (issues <= 1) ? ICON_MDI_CHECK_CIRCLE : ICON_MDI_ALERT;
         float warnW = ImGui::CalcTextSize(warnIcon).x + 4.0f;
 
@@ -4053,12 +3737,11 @@ namespace ui
 
         ImGui::Dummy(ImVec2(0, 5));
 
-        // Status icon (before label) — alert when warnings, checkmark when clean
         {
             ImU32 iconCol;
-            if (issues >= 4)      iconCol = colors::VerifyBad;  // red
-            else if (issues >= 2) iconCol = colors::VerifyWarn; // orange
-            else                  iconCol = colors::VerifyGood;  // green (Very Strong + Excellent)
+            if (issues >= 4)      iconCol = colors::VerifyBad;
+            else if (issues >= 2) iconCol = colors::VerifyWarn;
+            else                  iconCol = colors::VerifyGood;
             ImGui::PushStyleColor(ImGuiCol_Text, ImColor(iconCol).Value);
             ImGui::TextUnformatted(warnIcon);
             ImGui::PopStyleColor();
@@ -4110,7 +3793,6 @@ namespace ui
         //ImGui::Spacing();
     }
 
-    // Returns true if password text changed
     bool PasswordFieldRow(
         const char* id,
         std::string& pw,
@@ -4122,25 +3804,21 @@ namespace ui
 
         ImGui::PushID(id);
 
-        // 4 end-cap buttons
         const float gap = 10.0f;
-        const float btnSz = 34.0f; // match input field height
+        const float btnSz = 34.0f; // matches InputText4 field height
         const float iconsTotal = btnSz * 4.0f + gap * 3.0f;
 
         float inputW = full_w - iconsTotal - gap;
         if (inputW < 120.0f) inputW = 120.0f;
 
-        // input
         ImGui::PushItemWidth(inputW);
         if (show_passwword)
         {
-            // Show plaintext
             if (ui::InputTextString("Enter Password##pw", &pw, 0))
                 changed = true;
         }
         else
         {
-            // Masked with last-char reveal
             if (ui::InputTextPasswordReveal("Enter Password##pw", &pw))
                 changed = true;
         }
@@ -4148,12 +3826,11 @@ namespace ui
 
         ImGui::SameLine(0, gap);
 
-        // Align buttons with the field box (skip floating label area)
+        // skip floating label area so buttons align with the field box
         float labelAreaH = ImGui::GetFontSize() * 0.82f + 2.0f;
         float btnY = ImGui::GetCursorPosY() + labelAreaH;
         ImGui::SetCursorPosY(btnY);
 
-        // Generate
         if (ui::IconButtonSquare2("gen", ICON_MDI_REFRESH, btnSz))
         {
             std::string g = helpers::generate_password(genOpt);
@@ -4171,7 +3848,6 @@ namespace ui
         ImGui::SameLine(0, gap);
         ImGui::SetCursorPosY(btnY);
 
-        // Show/Hide
         const char* eye = show_passwword ? ICON_MDI_EYE_OFF : ICON_MDI_EYE;
         if (ui::IconButtonSquare2("eye", eye, btnSz))
             show_passwword = !show_passwword;
@@ -4182,7 +3858,7 @@ namespace ui
         ImGui::SameLine(0, gap);
         ImGui::SetCursorPosY(btnY);
 
-        // Copy (with checkmark feedback)
+        // copy with brief checkmark feedback
         {
             static double s_copy_time = 0.0;
             double now = ImGui::GetTime();
@@ -4205,7 +3881,6 @@ namespace ui
         ImGui::SameLine(0, gap);
         ImGui::SetCursorPosY(btnY);
 
-        // Generator Settings
         if (ui::IconButtonSquare2("gen_settings", ICON_MDI_TUNE_VERTICAL, btnSz))
             ImGui::OpenPopup("##gen_options_popup");
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
@@ -4221,7 +3896,6 @@ namespace ui
             ImGui::Spacing();
             ImGui::Spacing();
 
-            // Snapshot current options to detect changes
             auto prev = genOpt;
 
             ImGui::SetNextItemWidth(150.0f);
@@ -4234,7 +3908,6 @@ namespace ui
             ImGui::Spacing();
             ToggleSwitch("##gen_ambig", &genOpt.avoid_ambiguous); ImGui::SameLine(0, 4); ImGui::TextUnformatted("Avoid Ambiguous (0O, 1lI)");
 
-            // Auto-regenerate when any option changes
             bool optChanged = genOpt.length != prev.length
                 || genOpt.use_upper != prev.use_upper
                 || genOpt.use_lower != prev.use_lower
@@ -4258,17 +3931,12 @@ namespace ui
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
 
-        // strength bar + label under it
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() - 4.0f);
         DrawStrengthMeterCompact(pw, full_w);
 
         ImGui::PopID();
         return changed;
     }
-
-    // ============================================================
-    // BarMenuItem — popup menu item with left accent bar instead of checkmark
-    // ============================================================
 
     bool BarMenuItem(const char* label, bool selected, bool enabled, bool dim_unselected)
     {
@@ -4278,16 +3946,13 @@ namespace ui
         const bool has_indicator = dim_unselected || selected;
         const float dot_col_w = has_indicator ? 16.0f : 0.0f;
 
-        // Extra vertical spacing between items
         ImGui::Dummy(ImVec2(0, 2.5f));
 
         if (!enabled) ImGui::BeginDisabled();
 
-        // Dim unselected text to match Sort/View dropdown style
         if (dim_unselected && !selected)
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_Text, 0.55f));
 
-        // Indent text to make room for dot column (only when selection indicators are used)
         if (dot_col_w > 0.0f) ImGui::Indent(dot_col_w);
         ImGui::PushStyleColor(ImGuiCol_Header,        IM_COL32(0,0,0,0));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered,  IM_COL32(0,0,0,0));
@@ -4307,7 +3972,6 @@ namespace ui
         ImVec2 itemMax = ImGui::GetItemRectMax();
         bool hovered = enabled && ImGui::IsItemHovered();
 
-        // Hover fill — extend to full popup width
         if (hovered)
         {
             float winX = ImGui::GetWindowPos().x;
@@ -4317,7 +3981,6 @@ namespace ui
             dl->AddRectFilled(hMin, hMax, ImGui::GetColorU32(ImGuiCol_Text, 0.08f), rounding);
         }
 
-        // Active dot indicator
         if (selected)
         {
             float dot_x = itemMin.x - dot_col_w * 0.5f;
@@ -4335,10 +3998,6 @@ namespace ui
         return clicked;
     }
 
-    // ============================================================
-    // Scroll top fade — subtle inner shadow when scrolled
-    // ============================================================
-
     void DrawScrollTopFade(ImVec2 childMin, float childWidth, float scrollY, float yOffset)
     {
         if (scrollY <= 0.0f) return;
@@ -4354,11 +4013,7 @@ namespace ui
             top, top, bot, bot);
     }
 
-    // ============================================================
-    // PopupStyleBegin/End — drop shadow, backdrop dim, fade-in
-    // Call right after BeginPopup succeeds / right before EndPopup.
-    // ============================================================
-
+    // PopupStyleBegin/End: call right after BeginPopup succeeds / right before EndPopup
     static float s_popup_fade = 0.0f;
 
     void PopupStyleBegin()
@@ -4366,8 +4021,7 @@ namespace ui
         ImGuiWindow* win = ImGui::GetCurrentWindow();
         ImDrawList* dl = win->DrawList;
 
-        // Fade-in animation (~120ms)
-        if (ImGui::IsWindowAppearing()) s_popup_fade = 0.0f;
+        if (ImGui::IsWindowAppearing()) s_popup_fade = 0.0f; // ~120ms fade-in
         s_popup_fade = ImMin(s_popup_fade + ImGui::GetIO().DeltaTime * 8.5f, 1.0f);
         float fade = s_popup_fade;
 
@@ -4375,12 +4029,10 @@ namespace ui
         ImVec2 popMax(popMin.x + win->Size.x, popMin.y + win->Size.y);
         float rounding = win->WindowRounding;
 
-        // Split draw list: channel 0 = shadow (behind), channel 1 = content
-        dl->ChannelsSplit(2);
+        dl->ChannelsSplit(2); // ch0 = shadow (behind), ch1 = content
         dl->ChannelsSetCurrent(0);
         dl->PushClipRectFullScreen();
 
-        // Drop shadow beneath popup
         {
             const float shadowOff = 1.0f;
             for (int i = 1; i <= 3; i++)
@@ -4395,49 +4047,39 @@ namespace ui
             }
         }
 
-        // Re-draw popup background
         ImU32 popupBg = ImGui::GetColorU32(ImGuiCol_PopupBg);
         dl->AddRectFilled(popMin, popMax, popupBg, rounding);
 
-        // Gradient border: light top-left → dark bottom-right
+        // gradient border: TL bright → BR dark
         {
             bool dark = g_shell_ptr ? g_shell_ptr->dark_theme : true;
             ImU32 colTL = theme::BevelTL;
             ImU32 colBR = theme::BevelBR;
-            // Top edge (TL → TR)
             dl->AddRectFilledMultiColor(
                 ImVec2(popMin.x + rounding, popMin.y),
                 ImVec2(popMax.x - rounding, popMin.y + 1.0f),
                 colTL, colBR, colBR, colTL);
-            // Bottom edge (solid dark, flush with bottom)
             dl->AddRectFilled(
                 ImVec2(popMin.x + rounding * 1.f, popMax.y + 0.0f),
                 ImVec2(popMax.x - rounding * 1.f, popMax.y + 1.0f),
                 colBR);
-            // Left edge (TL → BL)
             dl->AddRectFilledMultiColor(
                 ImVec2(popMin.x, popMin.y + rounding),
                 ImVec2(popMin.x + 1.0f, popMax.y - rounding + 1.0f),
                 colTL, colTL, colBR, colBR);
-            // Right edge (TR → BR)
             dl->AddRectFilledMultiColor(
                 ImVec2(popMax.x - 1.0f, popMin.y + rounding),
                 ImVec2(popMax.x, popMax.y - rounding + 1.0f),
                 colBR, colBR, colBR, colBR);
-            // Rounded corners: arcs inset by 0.5px to align with 1px border lines
-            float r = rounding - 0.5f;
+            float r = rounding - 0.5f; // arcs inset 0.5px to align with 1px border lines
             ImU32 colTR = theme::BevelTR;
             ImU32 colBL = theme::BevelBL;
-            // Top-left
             dl->PathArcTo(ImVec2(popMin.x + rounding, popMin.y + rounding), r, IM_PI, IM_PI * 1.5f, 8);
             dl->PathStroke(colTL, 0, 1.0f);
-            // Top-right
             dl->PathArcTo(ImVec2(popMax.x - rounding, popMin.y + rounding), r, IM_PI * 1.5f, IM_PI * 2.0f, 8);
             dl->PathStroke(colTR, 0, 1.0f);
-            // Bottom-left
             dl->PathArcTo(ImVec2(popMin.x + rounding, popMax.y - rounding + 1.0f), r, IM_PI * 0.5f, IM_PI, 8);
             dl->PathStroke(colBL, 0, 1.0f);
-            // Bottom-right
             dl->PathArcTo(ImVec2(popMax.x - rounding, popMax.y - rounding + 1.0f), r, 0.0f, IM_PI * 0.5f, 8);
             dl->PathStroke(colBR, 0, 1.0f);
         }
@@ -4445,7 +4087,6 @@ namespace ui
         dl->PopClipRect();
         dl->ChannelsSetCurrent(1);
 
-        // Fade content alpha
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, fade);
     }
 
@@ -4454,10 +4095,6 @@ namespace ui
         ImGui::PopStyleVar(); // Alpha
         ImGui::GetWindowDrawList()->ChannelsMerge();
     }
-
-    // ============================================================
-    // LiftedChild — double 1px border container
-    // ============================================================
 
     static LiftedChildColorSet g_lifted_colors = {};
 
@@ -4468,7 +4105,6 @@ namespace ui
 
     bool BeginLiftedChild(const char* id, ImVec2 size, ImGuiWindowFlags flags)
     {
-        // Outer border via child frame
         ImGui::PushStyleColor(ImGuiCol_Border, g_lifted_colors.borderOuter);
         ImGui::PushStyleColor(ImGuiCol_ChildBg, g_lifted_colors.bg);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 1.0f);
@@ -4483,11 +4119,10 @@ namespace ui
 
     void EndLiftedChild()
     {
-        // Get child rect before ending — this is the final sized rect
         ImVec2 wMin = ImGui::GetWindowPos();
         ImVec2 wMax(wMin.x + ImGui::GetWindowSize().x, wMin.y + ImGui::GetWindowSize().y);
 
-        // Inner highlight border (inset 1px) — top/left brighter for lift
+        // inner highlight border (inset 1px) — top/left brighter for lift effect
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRect(
             ImVec2(wMin.x + 1.0f, wMin.y + 1.0f),
@@ -4496,18 +4131,12 @@ namespace ui
 
         ImGui::EndChild();
 
-        // Bottom drop shadow (drawn in parent after EndChild)
         ImDrawList* pdl = ImGui::GetWindowDrawList();
         ImVec2 rMin = ImGui::GetItemRectMin();
         ImVec2 rMax = ImGui::GetItemRectMax();
-        // Layered soft shadow below the container
         pdl->AddLine(ImVec2(rMin.x + 3.0f, rMax.y), ImVec2(rMax.x - 3.0f, rMax.y), IM_COL32(0, 0, 0, 20), 1.0f);
         pdl->AddLine(ImVec2(rMin.x + 5.0f, rMax.y + 1.0f), ImVec2(rMax.x - 5.0f, rMax.y + 1.0f), IM_COL32(0, 0, 0, 12), 1.0f);
     }
-
-    // ============================================================
-    // LippedChild — rounded child with thick lip beneath
-    // ============================================================
 
     static LippedChildColorSet g_lipped_colors = {};
 
@@ -4521,11 +4150,10 @@ namespace ui
         const float lip_offset = 3.0f;
         const float rounding = 10.0f;
 
-        // If height is 0 (fill available), shrink to leave room for the lip
         if (size.y == 0.0f)
-            size.y = ImGui::GetContentRegionAvail().y - lip_offset;
+            size.y = ImGui::GetContentRegionAvail().y - lip_offset; // leave room for lip
 
-        // Draw the lip rect first (behind the child) shifted down
+        // draw lip rect first (behind child), shifted down
         ImVec2 pos = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         const float lip_inset = 2.0f;
@@ -4535,7 +4163,6 @@ namespace ui
             g_lipped_colors.lip_color,
             rounding);
 
-        // Child draws on top
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, rounding);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 8));
         ImGui::PushStyleColor(ImGuiCol_ChildBg, g_lipped_colors.bg);
@@ -4551,9 +4178,7 @@ namespace ui
         ImGui::EndChild();
     }
 
-    // ============================================================
-    // On-Screen Keyboard (foreground overlay — no window/popup)
-    // ============================================================
+    // on-screen keyboard — foreground draw list overlay, no ImGui window
     bool g_show_osk = false;
 
     static int    s_osk_layout = 0;  // 0=lower, 1=upper, 2=numbers/symbols
@@ -4621,7 +4246,6 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* dl = ImGui::GetForegroundDrawList();
 
-        // Initialize position centered near bottom
         if (!s_osk_initialized)
         {
             s_osk_pos = ImVec2(io.DisplaySize.x * 0.5f - s_osk_size.x * 0.5f,
@@ -4641,7 +4265,6 @@ namespace ui
         bool mouseInOsk = (mouse.x >= pMin.x && mouse.x <= pMax.x &&
                            mouse.y >= pMin.y && mouse.y <= pMax.y);
 
-        // ---- Dragging via title bar ----
         ImVec2 titleMin = pMin;
         ImVec2 titleMax = ImVec2(pMax.x, pMin.y + titleH);
         bool mouseInTitle = (mouse.x >= titleMin.x && mouse.x <= titleMax.x &&
@@ -4664,7 +4287,6 @@ namespace ui
                     s_osk_pos.x = io.DisplaySize.x - s_osk_size.x;
                 if (s_osk_pos.y + s_osk_size.y > io.DisplaySize.y)
                     s_osk_pos.y = io.DisplaySize.y - s_osk_size.y;
-                // Recalc bounds
                 pMin = s_osk_pos;
                 pMax = ImVec2(pMin.x + s_osk_size.x, pMin.y + s_osk_size.y);
             }
@@ -4672,15 +4294,12 @@ namespace ui
                 s_osk_dragging = false;
         }
 
-        // ---- Background ----
-        // Shadow
         dl->AddRectFilled(ImVec2(pMin.x + 2, pMin.y + 3), ImVec2(pMax.x + 2, pMax.y + 3),
             IM_COL32(0, 0, 0, dark ? 80 : 40), rounding);
-        // Body
         ImU32 bgCol = dark ? theme::DropdownBg.dark : theme::DropdownBg.light;
         dl->AddRectFilled(pMin, pMax, bgCol, rounding);
 
-        // Gradient border
+        // gradient border (same bevel scheme as popups)
         {
             ImU32 colTL = theme::BevelTL;
             ImU32 colBR = theme::BevelBR;
@@ -4709,17 +4328,14 @@ namespace ui
             dl->PathStroke(colBR, 0, 1.0f);
         }
 
-        // ---- Title bar ----
         {
             ImU32 titleBg = dark ? theme::InputBg.dark : theme::InputBg.light;
             dl->AddRectFilled(titleMin, titleMax, titleBg, rounding, ImDrawFlags_RoundCornersTop);
-            // Title text
             const char* title = ICON_MDI_KEYBOARD "  Keyboard";
             ImVec2 tSz = ImGui::CalcTextSize(title);
             ImU32 titleText = dark ? IM_COL32(200, 200, 200, 255) : IM_COL32(60, 60, 60, 255);
             dl->AddText(ImVec2(titleMin.x + 10, titleMin.y + (titleH - tSz.y) * 0.5f), titleText, title);
 
-            // Close button (X)
             const char* closeIco = ICON_MDI_CLOSE;
             ImVec2 cSz = ImGui::CalcTextSize(closeIco);
             float closeX = titleMax.x - cSz.x - 10;
@@ -4741,19 +4357,16 @@ namespace ui
             }
         }
 
-        // ---- Key colors ----
         ImU32 keyBg     = dark ? IM_COL32(55, 55, 60, 255)  : IM_COL32(255, 255, 255, 255);
         ImU32 keyBgHov  = dark ? IM_COL32(75, 75, 82, 255)  : IM_COL32(230, 230, 235, 255);
         ImU32 keyBgAct  = dark ? IM_COL32(90, 90, 100, 255) : IM_COL32(210, 210, 218, 255);
         ImU32 specKeyBg = dark ? IM_COL32(45, 45, 50, 255)  : IM_COL32(210, 210, 218, 255);
         ImU32 keyText   = dark ? IM_COL32(240, 240, 240, 255) : IM_COL32(30, 30, 30, 255);
 
-        // Flash feedback
         static ImVec2 s_pressed_pos(0, 0);
         static int s_pressed_frames = 0;
         if (s_pressed_frames > 0) s_pressed_frames--;
 
-        // Helper: draw a key using screen coords, returns true if clicked
         auto DrawKey = [&](const char* label, ImVec2 kMin, float w, float h, ImU32 bg) -> bool
         {
             ImVec2 kMax(kMin.x + w, kMin.y + h);
@@ -4768,19 +4381,15 @@ namespace ui
 
             ImU32 col = (held || flash) ? keyBgAct : (hov ? keyBgHov : bg);
 
-            // Shadow
             dl->AddRectFilled(ImVec2(kMin.x, kMin.y + 1.0f), ImVec2(kMax.x, kMax.y + 1.0f),
                 dark ? theme::ComboShadow.dark : theme::ComboShadow.light, keyRounding);
-            // Face
             dl->AddRectFilled(kMin, kMax, col, keyRounding);
-            // Label
             ImVec2 tSz = ImGui::CalcTextSize(label);
             dl->AddText(ImVec2(kMin.x + (w - tSz.x) * 0.5f, kMin.y + (h - tSz.y) * 0.5f), keyText, label);
 
             return clicked;
         };
 
-        // ---- Layout data ----
         const char** keys;
         const int* rowStarts;
         const int* rowLens;
@@ -4790,7 +4399,6 @@ namespace ui
         else if (s_osk_layout == 1) { keys = s_osk_rows_upper; rowStarts = s_row_starts_alpha; rowLens = s_row_lens_alpha; numCharRows = 3; }
         else                        { keys = s_osk_rows_sym;   rowStarts = s_row_starts_sym;   rowLens = s_row_lens_sym;   numCharRows = 4; }
 
-        // Content area (below title bar, with padding)
         float contentX = pMin.x + pad;
         float contentY = pMin.y + titleH + pad * 0.5f;
         float contentW = s_osk_size.x - pad * 2;
@@ -4803,7 +4411,6 @@ namespace ui
 
         float curY = contentY;
 
-        // ---- Character rows ----
         for (int row = 0; row < numCharRows; row++)
         {
             int start = rowStarts[row];
@@ -4828,29 +4435,24 @@ namespace ui
             curY += keyH + keyGap;
         }
 
-        // ---- Bottom row: Shift | 123 | Space | Backspace | Enter ----
         {
             float specialW = contentW * 0.13f;
             float spaceW = contentW - specialW * 4 - keyGap * 4;
             float bx = contentX;
 
-            // Shift
             if (DrawKey(ICON_MDI_APPLE_KEYBOARD_SHIFT, ImVec2(bx, curY), specialW, keyH, specKeyBg))
                 s_osk_layout = (s_osk_layout == 1) ? 0 : 1;
             bx += specialW + keyGap;
 
-            // 123 / ABC
             const char* togLabel = (s_osk_layout == 2) ? "ABC" : "123";
             if (DrawKey(togLabel, ImVec2(bx, curY), specialW, keyH, specKeyBg))
                 s_osk_layout = (s_osk_layout == 2) ? 0 : 2;
             bx += specialW + keyGap;
 
-            // Space
             if (DrawKey(" ", ImVec2(bx, curY), spaceW, keyH, keyBg))
                 io.AddInputCharacter(' ');
             bx += spaceW + keyGap;
 
-            // Backspace
             if (DrawKey(ICON_MDI_BACKSPACE_OUTLINE, ImVec2(bx, curY), specialW, keyH, specKeyBg))
             {
                 io.AddKeyEvent(ImGuiKey_Backspace, true);
@@ -4858,7 +4460,6 @@ namespace ui
             }
             bx += specialW + keyGap;
 
-            // Enter
             if (DrawKey(ICON_MDI_KEYBOARD_RETURN, ImVec2(bx, curY), specialW, keyH, specKeyBg))
             {
                 io.AddKeyEvent(ImGuiKey_Enter, true);
@@ -4866,8 +4467,7 @@ namespace ui
             }
         }
 
-        // Block mouse from passing through to widgets below the keyboard
-        if (mouseInOsk)
+        if (mouseInOsk) // prevent click-through to widgets behind the keyboard
             io.WantCaptureMouse = true;
     }
 

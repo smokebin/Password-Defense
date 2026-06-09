@@ -1,5 +1,4 @@
 // credential_ops.cpp
-// High-level Credential operations implementation
 
 #include "credential_ops.h"
 #include "vault_db.h"
@@ -9,13 +8,7 @@
 
 namespace cred_ops {
 
-    // ============================================================
-    // Internal helpers
-    // ============================================================
-
-    // Decrypt a database row into a Credential struct
-    // Uses UUID as AAD to bind ciphertext to Credential identity
-    // Sets needs_migration flag if legacy (no-AAD) fallback was used
+    // UUID is AAD; needs_migration set if legacy no-AAD fallback succeeded
     static Credential decrypt_row(const vault_db::CredentialRow& row, const std::vector<uint8_t>& key, bool* needs_migration = nullptr)
     {
         Credential c{};
@@ -23,10 +16,9 @@ namespace cred_ops {
         c.created_at_ms = row.created_at_ms;
         c.updated_at_ms = row.updated_at_ms;
         c.deleted_at_ms = row.deleted_at_ms;
-        // Decrypt with UUID as AAD
         std::string json = enc::decrypt_credential(row.encrypted_blob, key, row.uuid);
 
-        // If AAD decryption fails, try legacy (no AAD) for migration
+        // fallback for older blobs written without AAD
         if (json.empty()) {
             json = enc::decrypt_credential_legacy(row.encrypted_blob, key);
             if (!json.empty() && needs_migration)
@@ -52,7 +44,6 @@ namespace cred_ops {
 
             c.type = static_cast<CredType>(j.value("type", 0));
 
-            // Credit Card
             c.card_number     = j.value("card_number", "");
             c.card_expiry     = j.value("card_expiry", "");
             c.card_cvv        = j.value("card_cvv", "");
@@ -62,7 +53,6 @@ namespace cred_ops {
             c.card_city       = j.value("card_city", "");
             c.card_postal_code = j.value("card_postal_code", "");
 
-            // Identity
             c.full_name     = j.value("full_name", "");
             c.id_type       = j.value("id_type", "");
             c.id_number     = j.value("id_number", "");
@@ -72,13 +62,13 @@ namespace cred_ops {
             c.address       = j.value("address", "");
             c.phone         = j.value("phone", "");
 
-            // Tags (backward compat: absent in old blobs)
+            // absent in old blobs — use default empty array
             for (const auto& t : j.value("tags", nlohmann::json::array())) {
                 if (t.is_string() && !t.get<std::string>().empty())
                     c.tags.push_back(t.get<std::string>());
             }
 
-            // Password history (backward compat: absent in old blobs)
+            // same — absent in old blobs
             for (const auto& h : j.value("password_history", nlohmann::json::array())) {
                 Credential::PasswordHistoryEntry e;
                 e.password      = h.value("password", "");
@@ -86,18 +76,13 @@ namespace cred_ops {
                 c.password_history.push_back(std::move(e));
             }
         }
-        catch (...) {
-            // JSON parse failed, return partial Credential
-        }
+        catch (...) {}
 
-        // Clear sensitive data from json string
         enc::secure_zero(json);
 
         return c;
     }
 
-    // Encrypt a Credential struct into a blob
-    // Uses UUID as AAD to bind ciphertext to Credential identity
     static std::vector<uint8_t> encrypt_cred(const Credential& c, const std::vector<uint8_t>& key, const std::string& uuid)
     {
         nlohmann::json j = {
@@ -143,16 +128,10 @@ namespace cred_ops {
 
         std::string json_str = j.dump();
         auto blob = enc::encrypt_credential(json_str, key, uuid);  // UUID as AAD
-
-        // Clear sensitive data
         enc::secure_zero(json_str);
 
         return blob;
     }
-
-    // ============================================================
-    // Load operations
-    // ============================================================
 
     std::vector<Credential> load_all(const std::vector<uint8_t>& master_key)
     {
@@ -162,13 +141,12 @@ namespace cred_ops {
             return results;
 
         auto rows = vault_db::get_all_credentials();
-        std::vector<std::string> migrate_uuids;  // legacy no-AAD blobs to re-encrypt
+        std::vector<std::string> migrate_uuids;  // blobs that need re-encryption with AAD
 
         for (const auto& row : rows) {
             bool needs_migration = false;
             Credential c = decrypt_row(row, master_key, &needs_migration);
 
-            // Only include if decryption succeeded (has some content)
             if (!c.title.empty() || !c.password.empty() || !c.user.empty()
                 || !c.card_number.empty() || !c.id_number.empty() || !c.notes.empty()) {
                 if (needs_migration && !c.uuid.empty())
@@ -177,7 +155,6 @@ namespace cred_ops {
             }
         }
 
-        // Force-migrate legacy no-AAD blobs: re-encrypt with UUID as AAD
         if (!migrate_uuids.empty()) {
             for (const auto& uuid : migrate_uuids) {
                 for (const auto& c : results) {
@@ -189,8 +166,7 @@ namespace cred_ops {
             }
         }
 
-        // Assign sequential IDs for UI display (NOT for identity - use UUID)
-        int display_id = 1;
+        int display_id = 1;  // display-only; identity is always uuid
         for (auto& c : results) {
             c.id = display_id++;
         }
@@ -219,10 +195,6 @@ namespace cred_ops {
         return results;
     }
 
-    // ============================================================
-    // CRUD operations
-    // ============================================================
-
     std::string add(const Credential& c, const std::vector<uint8_t>& master_key)
     {
         if (master_key.empty() || !vault_db::is_open())
@@ -231,7 +203,7 @@ namespace cred_ops {
         std::string uuid = c.uuid.empty() ? helpers::generate_uuid() : c.uuid;
         int64_t now_ms = helpers::now_unix_ms();
 
-        auto blob = encrypt_cred(c, master_key, uuid);  // Encrypt with UUID as AAD
+        auto blob = encrypt_cred(c, master_key, uuid);
         if (blob.empty())
             return "";
 
@@ -253,7 +225,7 @@ namespace cred_ops {
 
         int64_t now_ms = helpers::now_unix_ms();
 
-        auto blob = encrypt_cred(c, master_key, uuid);  // Encrypt with UUID as AAD
+        auto blob = encrypt_cred(c, master_key, uuid);
         if (blob.empty())
             return false;
 
@@ -276,47 +248,64 @@ namespace cred_ops {
         return vault_db::hard_delete_credential(uuid);
     }
 
-    // ============================================================
-    // Batch operations
-    // ============================================================
-
     bool import_credentials(
         const std::vector<Credential>& creds,
-        const std::vector<uint8_t>& master_key)
+        const std::vector<uint8_t>& master_key,
+        int* out_inserted,
+        int* out_updated,
+        int* out_skipped,
+        std::string* out_error)
     {
-        if (master_key.empty() || !vault_db::is_open())
+        if (out_inserted) *out_inserted = 0;
+        if (out_updated)  *out_updated  = 0;
+        if (out_skipped)  *out_skipped  = 0;
+
+        if (master_key.empty() || !vault_db::is_open()) {
+            if (out_error) *out_error = "vault not open or master key missing";
             return false;
+        }
 
         vault_db::begin_transaction();
 
         int64_t now_ms = helpers::now_unix_ms();
+        int inserted_count = 0;
+        int updated_count  = 0;
+        int skipped_count  = 0;
 
         for (const auto& c : creds) {
             std::string uuid = c.uuid.empty() ? helpers::generate_uuid() : c.uuid;
 
-            // Use existing timestamps or generate new ones
             int64_t created_ms = (c.created_at_ms != 0) ? c.created_at_ms : now_ms;
             int64_t updated_ms = (c.updated_at_ms != 0) ? c.updated_at_ms : created_ms;
 
-            auto blob = encrypt_cred(c, master_key, uuid);  // Encrypt with UUID as AAD
+            auto blob = encrypt_cred(c, master_key, uuid);
             if (blob.empty()) {
                 vault_db::rollback_transaction();
+                if (out_error) *out_error = "encrypt failed for one of the imported credentials";
                 return false;
             }
 
-            if (!vault_db::insert_credential(uuid, blob, created_ms, updated_ms)) {
+            vault_db::UpsertOutcome outcome = vault_db::UpsertOutcome::Inserted;
+            std::string sql_err;
+            if (!vault_db::upsert_credential(uuid, blob, created_ms, updated_ms, &outcome, &sql_err)) {
                 vault_db::rollback_transaction();
+                if (out_error) *out_error = sql_err.empty() ? "upsert failed" : sql_err;
                 return false;
+            }
+            switch (outcome) {
+                case vault_db::UpsertOutcome::Inserted: inserted_count++; break;
+                case vault_db::UpsertOutcome::Updated:  updated_count++;  break;
+                case vault_db::UpsertOutcome::Skipped:  skipped_count++;  break;
             }
         }
 
         vault_db::commit_transaction();
+
+        if (out_inserted) *out_inserted = inserted_count;
+        if (out_updated)  *out_updated  = updated_count;
+        if (out_skipped)  *out_skipped  = skipped_count;
         return true;
     }
-
-    // ============================================================
-    // Utility
-    // ============================================================
 
     bool has_pending_changes()
     {

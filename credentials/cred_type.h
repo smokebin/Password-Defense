@@ -1,5 +1,4 @@
 // cred_type.h
-// Shared Credential type enum (included by credential.h and UI.h)
 #pragma once
 
 enum class CredType : int { Password = 0, CreditCard = 1, Identity = 2, SecureNote = 3 };

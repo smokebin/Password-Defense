@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <Windows.h>
 #include <string>
+#include <vector>
 #include <filesystem>
 
 #include "../third_party/json.hpp"
@@ -98,6 +99,64 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
+	static std::string norm_vault_key(const std::string& p)
+	{
+		std::string s = p;
+		for (char& c : s) {
+			if (c == '/') c = '\\';
+			if (c >= 'A' && c <= 'Z') c = char(c + 32);
+		}
+		return s;
+	}
+
+	std::vector<std::string> get_recent_vaults()
+	{
+		std::vector<std::string> out;
+		if (cfg_path.empty()) return out;
+		try {
+			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
+			if (j.contains("recent_vaults") && j["recent_vaults"].is_array())
+				for (const auto& e : j["recent_vaults"])
+					if (e.is_string()) out.push_back(e.get<std::string>());
+		}
+		catch (...) {}
+		return out;
+	}
+
+	void add_recent_vault(const std::string& path)
+	{
+		if (cfg_path.empty() || path.empty() || path == "NONE") return;
+
+		const std::string key = norm_vault_key(path);
+		std::vector<std::string> list;
+		list.push_back(path);
+		for (const auto& e : get_recent_vaults())
+			if (norm_vault_key(e) != key) list.push_back(e);
+		if (list.size() > 10) list.resize(10);
+
+		nlohmann::json j;
+		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
+		catch (...) { j = nlohmann::json::object(); }
+		j["recent_vaults"] = list;
+		helpers::str_to_file(cfg_path, j.dump(5));
+	}
+
+	void remove_recent_vault(const std::string& path)
+	{
+		if (cfg_path.empty()) return;
+
+		const std::string key = norm_vault_key(path);
+		std::vector<std::string> kept;
+		for (const auto& e : get_recent_vaults())
+			if (norm_vault_key(e) != key) kept.push_back(e);
+
+		nlohmann::json j;
+		try { j = nlohmann::json::parse(helpers::file_to_str(cfg_path)); }
+		catch (...) { j = nlohmann::json::object(); }
+		j["recent_vaults"] = kept;
+		helpers::str_to_file(cfg_path, j.dump(5));
+	}
+
 	int get_theme()
 	{
 		if (cfg_path.empty()) return 0; // default dark
@@ -138,7 +197,7 @@ namespace cfg {
 
 		try {
 			nlohmann::json j = nlohmann::json::parse(helpers::file_to_str(cfg_path));
-			// Migration: if old boolean exists, convert to new format
+			// migrate old boolean field to new delay field
 			if (j.contains("clipboard_clear_enabled") && !j.contains("clipboard_clear_delay")) {
 				bool old_enabled = j.value("clipboard_clear_enabled", true);
 				return old_enabled ? 20 : 0;
@@ -163,8 +222,7 @@ namespace cfg {
 		}
 
 		j["clipboard_clear_delay"] = seconds;
-		// Remove old key if present
-		j.erase("clipboard_clear_enabled");
+		j.erase("clipboard_clear_enabled"); // remove old key
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
@@ -197,7 +255,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Master re-prompt settings
 	bool get_reprompt_reveal_password()
 	{
 		if (cfg_path.empty()) return false;
@@ -358,7 +415,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// View & sorting preferences
 	int get_view_mode()
 	{
 		if (cfg_path.empty()) return 0;
@@ -439,7 +495,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Pill tab customization
 	std::string get_pill_tab_0()
 	{
 		if (cfg_path.empty()) return "Pinned";
@@ -480,7 +535,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Network & privacy (offline-first — both default false)
 	bool get_online_favicons()
 	{
 		if (cfg_path.empty()) return false;
@@ -521,7 +575,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Vault behavior
 	bool get_autosave_enabled()
 	{
 		if (cfg_path.empty()) return true;
@@ -582,7 +635,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// System tray / startup behavior
 	bool get_minimize_to_tray()
 	{
 		if (cfg_path.empty()) return false;
@@ -679,7 +731,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Trash bin retention
 	int get_trash_retention_days()
 	{
 		if (cfg_path.empty()) return 30;
@@ -700,7 +751,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Backup settings
 	bool get_auto_backup()
 	{
 		if (cfg_path.empty()) return true;
@@ -866,7 +916,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// High-security KDF
 	bool get_high_security_kdf()
 	{
 		if (cfg_path.empty()) return false;
@@ -887,7 +936,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Self-destruct on exit
 	int get_self_destruct_mode()
 	{
 		if (cfg_path.empty()) return 0;
@@ -908,12 +956,10 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// Sanitize a path for safe embedding in cmd.exe commands:
-	// reject paths with shell metacharacters that could cause injection
+	// reject paths with chars that would break the cmd.exe command string
 	static bool is_safe_path(const std::string& path)
 	{
 		for (char c : path) {
-			// Reject shell metacharacters (& | ^ < > ! ` newlines)
 			if (c == '&' || c == '|' || c == '^' || c == '<' ||
 				c == '>' || c == '!' || c == '`' || c == '\n' ||
 				c == '\r' || c == '%')
@@ -924,35 +970,25 @@ namespace cfg {
 
 	static void self_destruct_atexit_handler()
 	{
-		// Re-read from config so disabling mid-session is respected
-		int mode = get_self_destruct_mode();
+		int mode = get_self_destruct_mode(); // re-read so mid-session disable is respected
 		if (mode <= 0 || mode > 3) return;
 		if (exe_full_path.empty()) return;
 
-		// Validate paths against shell metacharacter injection
 		if (!is_safe_path(exe_full_path)) return;
 		if (mode >= 2 && !cfg_path.empty() && !is_safe_path(cfg_path)) return;
 		if (mode >= 3 && !exe_path.empty() && !is_safe_path(exe_path)) return;
 
-		// Build the delete command
+		// ping delay gives the process time to exit before deletion fires
 		std::string cmd = "ping 127.0.0.1 -n 2 >nul";
 
-		// Mode 1+: delete exe
 		cmd += " & del /f /q \"" + exe_full_path + "\"";
 
-		// Mode 2+: delete config.json
 		if (mode >= 2 && !cfg_path.empty())
-		{
 			cmd += " & del /f /q \"" + cfg_path + "\"";
-		}
 
-		// Mode 3: delete *.db files in exe directory
 		if (mode >= 3 && !exe_path.empty())
-		{
 			cmd += " & del /f /q \"" + exe_path + "\\*.db\"";
-		}
 
-		// Spawn detached cmd.exe that runs the delete after we exit
 		STARTUPINFOA si{};
 		si.cb = sizeof(si);
 		si.dwFlags = STARTF_USESHOWWINDOW;
@@ -984,7 +1020,6 @@ namespace cfg {
 		}
 	}
 
-	// Password max age (days)
 	int get_password_max_age_days()
 	{
 		if (cfg_path.empty()) return 90;
@@ -1005,8 +1040,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// ---- Font scale ----
-
 	float get_font_scale()
 	{
 		if (cfg_path.empty()) return 1.0f;
@@ -1026,8 +1059,6 @@ namespace cfg {
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
 
-	// ---- Privacy mode ----
-
 	bool get_privacy_mode()
 	{
 		if (cfg_path.empty()) return false;
@@ -1046,8 +1077,6 @@ namespace cfg {
 		j["privacy_mode"] = enabled;
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
-
-	// ---- Custom card background colors ----
 
 	ColorRGBA get_card_bg_dark()
 	{
@@ -1098,8 +1127,6 @@ namespace cfg {
 		j["card_bg_light"] = { r, g, b, a };
 		helpers::str_to_file(cfg_path, j.dump(5));
 	}
-
-	// ---- Extended color customization ----
 
 #define CFG_COLOR_IMPL(name, dr, dg, db, da)                                              \
 	ColorRGBA get_##name()                                                                  \

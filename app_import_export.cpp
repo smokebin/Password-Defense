@@ -1,5 +1,4 @@
-// app_import_export.cpp
-// File picker dialogs, CSV import parsing, credential JSON serialization.
+// app_import_export.cpp — file pickers, CSV import, credential JSON serialization
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -11,10 +10,9 @@
 #include "app_internal.h"
 #include "third_party/json.hpp"
 #include "tools/utility.h"
+#include "tools/totp.h"
 
-// ============================================================
-// JSON serialization (for undo, in-memory only)
-// ============================================================
+// JSON serialization — in-memory only, used for undo
 
 std::string serialize_creds_json(const std::vector<Credential>& creds)
 {
@@ -98,10 +96,6 @@ std::vector<Credential> deserialize_creds_json(const std::string& json_str)
     } catch (...) {}
     return result;
 }
-
-// ============================================================
-// File picker dialogs
-// ============================================================
 
 std::string PickOpenFilePath_DB()
 {
@@ -233,10 +227,6 @@ std::string PickOpenFilePath_CSV()
     return {};
 }
 
-// ============================================================
-// CSV Import: parser, format detection, mapping
-// ============================================================
-
 static std::vector<std::string> csv_split_line(const std::string& line)
 {
     std::vector<std::string> fields;
@@ -336,7 +326,6 @@ static std::string str_lower(const std::string& s)
     return out;
 }
 
-// Strip surrounding quotes and whitespace from a header column name
 static std::string normalize_header(const std::string& s)
 {
     std::string out = str_lower(s);
@@ -351,7 +340,6 @@ static std::string normalize_header(const std::string& s)
 
 static CsvFormat detect_csv_format(const std::vector<std::string>& header_fields)
 {
-    // Build a set of normalized header names
     std::vector<std::string> cols;
     for (const auto& f : header_fields)
         cols.push_back(normalize_header(f));
@@ -369,29 +357,17 @@ static CsvFormat detect_csv_format(const std::vector<std::string>& header_fields
         return true;
     };
 
-    // 1. Bitwarden: has login_uri
     if (has("login_uri")) return CsvFormat::Bitwarden;
-
-    // 2. LastPass: has grouping and fav
     if (has("grouping") && has("fav")) return CsvFormat::LastPass;
-
-    // 3. Own app: starts with type,title,username,password,email,url,group
+    // own-app export has ≥25 columns starting with type,title,username...
     if (starts_with({"type", "title", "username", "password", "email", "url", "group"}) && cols.size() >= 25)
         return CsvFormat::OwnApp;
-
-    // 4. KeePass: has group, title, username, password (and typically URL, Notes)
     if (has("group") && has("title") && has("username") && has("password") && has("url"))
         return CsvFormat::KeePass;
-
-    // 5. Chrome: name,url,username,password (exactly or with note)
     if (cols.size() >= 4 && cols[0] == "name" && cols[1] == "url" && cols[2] == "username" && cols[3] == "password")
         return CsvFormat::Chrome;
-
-    // 6. 1Password: has title and password
     if (has("title") && has("password"))
         return CsvFormat::OnePassword;
-
-    // 7. Generic: try common column names
     if (has("password") || has("pass"))
         return CsvFormat::Generic;
 
@@ -413,9 +389,51 @@ static bool str_to_bool(const std::string& s)
     return low == "true" || low == "1" || low == "yes";
 }
 
-CsvImportResult parse_csv_import(const std::string& file_content)
+// accepts bare base32 or otpauth:// URI; malformed URI → ""
+static std::string totp_from_column_value(const std::string& raw)
+{
+    if (raw.empty()) return "";
+    if (raw.find("otpauth://") != std::string::npos) {
+        std::string parsed;
+        if (totp::parse_otpauth_uri(raw, parsed)) return parsed;
+        return "";  // malformed URI — don't pollute the field with garbage
+    }
+    return raw;
+}
+
+// scans notes/extra for an otpauth:// URI; bare "TOTP:" prefixes are too inconsistent to detect
+static std::string find_embedded_otpauth(const std::string& text)
+{
+    if (text.empty()) return "";
+    size_t s = text.find("otpauth://");
+    if (s == std::string::npos) return "";
+    size_t end = text.size();
+    for (size_t i = s; i < text.size(); ++i) {
+        char ch = text[i];
+        if (ch == '\r' || ch == '\n' || ch == ' ' || ch == '\t' || ch == '"' || ch == ',') {
+            end = i; break;
+        }
+    }
+    std::string parsed;
+    if (totp::parse_otpauth_uri(text.substr(s, end - s), parsed)) return parsed;
+    return "";
+}
+
+CsvImportResult parse_csv_import(const std::string& file_content_in)
 {
     CsvImportResult result;
+
+    // strip UTF-8 BOM — Excel on Windows adds it by default, corrupting the first header column
+    std::string file_content;
+    if (file_content_in.size() >= 3
+        && (unsigned char)file_content_in[0] == 0xEF
+        && (unsigned char)file_content_in[1] == 0xBB
+        && (unsigned char)file_content_in[2] == 0xBF) {
+        file_content.assign(file_content_in, 3, std::string::npos);
+    } else {
+        file_content = file_content_in;
+    }
+
     auto rows = csv_split_rows(file_content);
 
     if (rows.empty()) {
@@ -431,7 +449,6 @@ CsvImportResult parse_csv_import(const std::string& file_content)
         return result;
     }
 
-    // Build column index map (normalized name -> index)
     std::vector<std::string> cols;
     for (const auto& f : header_fields)
         cols.push_back(normalize_header(f));
@@ -452,11 +469,13 @@ CsvImportResult parse_csv_import(const std::string& file_content)
         auto fields = csv_split_line(rows[r]);
         if (fields.empty()) { result.skipped++; continue; }
 
-        // Skip rows that are all empty
         bool all_empty = true;
         for (const auto& f : fields)
             if (!f.empty()) { all_empty = false; break; }
         if (all_empty) { result.skipped++; continue; }
+
+        // short rows silently produce partial creds; count them so the preview can warn
+        if (fields.size() < cols.size()) result.short_rows++;
 
         Credential c;
         c.uuid.clear();
@@ -493,6 +512,8 @@ CsvImportResult parse_csv_import(const std::string& file_content)
             c.phone          = get_field(fields, 25);
             c.created_at_ms  = helpers::iso8601_to_unix_ms(get_field(fields, 26));
             c.updated_at_ms  = helpers::iso8601_to_unix_ms(get_field(fields, 27));
+            // col 28 = ExpiresAt (not re-imported); col 29 = TOTP; older exports lack both
+            c.totp_secret    = totp_from_column_value(get_field(fields, 29));
             break;
         }
         case CsvFormat::Chrome:
@@ -514,7 +535,8 @@ CsvImportResult parse_csv_import(const std::string& file_content)
             c.website     = get_field(fields, col_idx("login_uri"));
             c.user        = get_field(fields, col_idx("login_username"));
             c.password    = get_field(fields, col_idx("login_password"));
-            c.totp_secret = get_field(fields, col_idx("login_totp"));
+            // login_totp can be bare base32 or otpauth://
+            c.totp_secret = totp_from_column_value(get_field(fields, col_idx("login_totp")));
             break;
         }
         case CsvFormat::LastPass:
@@ -526,6 +548,8 @@ CsvImportResult parse_csv_import(const std::string& file_content)
             c.group       = get_field(fields, col_idx("grouping"));
             c.notes       = get_field(fields, col_idx("extra"));
             c.is_favorite = str_to_bool(get_field(fields, col_idx("fav")));
+            // no dedicated TOTP column; users paste otpauth:// into "extra"
+            c.totp_secret = find_embedded_otpauth(c.notes);
             break;
         }
         case CsvFormat::OnePassword:
@@ -535,6 +559,14 @@ CsvImportResult parse_csv_import(const std::string& file_content)
             c.password = get_field(fields, col_idx("password"));
             c.website  = get_field(fields, col_idx("url"));
             c.notes    = get_field(fields, col_idx("notes"));
+            // 1P7 uses "One-time password", 1P8 sometimes "otpauth" or "otp"
+            {
+                int oi = col_idx("one-time password");
+                if (oi < 0) oi = col_idx("otpauth");
+                if (oi < 0) oi = col_idx("otp");
+                if (oi >= 0) c.totp_secret = totp_from_column_value(get_field(fields, oi));
+                if (c.totp_secret.empty()) c.totp_secret = find_embedded_otpauth(c.notes);
+            }
             break;
         }
         case CsvFormat::KeePass:
@@ -545,11 +577,16 @@ CsvImportResult parse_csv_import(const std::string& file_content)
             c.password = get_field(fields, col_idx("password"));
             c.website  = get_field(fields, col_idx("url"));
             c.notes    = get_field(fields, col_idx("notes"));
+            // KeePassXC's "TOTP" column: bare base32 or otpauth://
+            {
+                int ti = col_idx("totp");
+                if (ti >= 0) c.totp_secret = totp_from_column_value(get_field(fields, ti));
+                if (c.totp_secret.empty()) c.totp_secret = find_embedded_otpauth(c.notes);
+            }
             break;
         }
         case CsvFormat::Generic:
         {
-            // Try multiple common column name variants
             auto try_cols = [&](std::initializer_list<const char*> names) -> std::string {
                 for (auto name : names) {
                     int i = col_idx(name);
@@ -564,15 +601,17 @@ CsvImportResult parse_csv_import(const std::string& file_content)
             c.notes    = try_cols({"notes", "note", "comment", "comments", "extra"});
             c.group    = try_cols({"group", "folder", "grouping", "category"});
             c.email    = try_cols({"email", "e-mail"});
+            c.totp_secret = totp_from_column_value(
+                try_cols({"totp", "totp_secret", "login_totp", "otpauth", "otp", "one-time password", "2fa"}));
+            if (c.totp_secret.empty()) c.totp_secret = find_embedded_otpauth(c.notes);
             break;
         }
         default:
             break;
         }
 
-        // Field length limits: prevent oversized fields from malformed CSVs
-        static constexpr size_t kMaxField = 1024;       // 1 KB for most fields
-        static constexpr size_t kMaxNotes = 65536;      // 64 KB for notes
+        static constexpr size_t kMaxField = 1024;   // 1 KB
+        static constexpr size_t kMaxNotes = 65536;  // 64 KB for notes
 
         auto cap = [](std::string& s, size_t max) {
             if (s.size() > max) s.resize(max);

@@ -1,10 +1,8 @@
-// ui_controls.cpp
-// List controls, sort/view dropdowns, selection toolbar, settings page
+// ui_controls.cpp — list controls, sort/view dropdowns, selection toolbar, settings page
 #include "ui_internal.h"
 
 namespace ui
 {
-    // Controls state definitions (extern in ui_internal.h)
     bool g_shell_open = false;
     UnderlineTabsAnim g_sortAnim;
     UnderlineTabsAnim g_orderAnim;
@@ -50,7 +48,6 @@ namespace ui
 
         ImGui::PushID("##vault_dropdown");
 
-        // Text-only button styling (no background, theme-aware hover)
         ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetColorU32(ImGuiCol_HeaderHovered));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetColorU32(ImGuiCol_HeaderActive));
@@ -58,7 +55,6 @@ namespace ui
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6, 4));
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
 
-        // -------- Label group --------
         ImVec2 groupStart = ImGui::GetCursorPos();
         ImGui::BeginGroup();
 
@@ -72,7 +68,6 @@ namespace ui
 
         ImGui::EndGroup();
 
-        // Click target over the whole group
         ImRect bb(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::SetCursorPos(groupStart);
         if (ImGui::InvisibleButton("##vault_btn", bb.GetSize()) && can_switch)
@@ -80,7 +75,6 @@ namespace ui
             ImGui::OpenPopup("##vault_popup");
         }
 
-        // -------- Popup --------
         if (can_switch && ImGui::BeginPopup("##vault_popup"))
         {
             for (int i = 0; i < count; ++i)
@@ -103,7 +97,6 @@ namespace ui
         return changed;
     }
 
-    // Unified header with vault dropdown (centered) and buttons on right [← ✕]
     static void RenderVaultHeader(ui::ShellState& s, bool show_back_button = false)
     {
         float startY = ImGui::GetCursorPosY();
@@ -111,7 +104,6 @@ namespace ui
         ImVec2 headerStart = ImGui::GetCursorScreenPos();
         float headerH = 30.0f;
 
-        // Center the dropdown
         if (!s.db_labels.empty())
         {
             float textW = ImGui::CalcTextSize(s.db_labels[s.active_db].c_str()).x;
@@ -121,13 +113,11 @@ namespace ui
         }
         RenderVaultDropdown(s, s.db_labels);
 
-        // Right side: [← back] [✕ exit]
         float exitW = ImGui::CalcTextSize(ICON_MDI_CLOSE).x;
         float backW = ImGui::CalcTextSize(ICON_MDI_ARROW_LEFT).x;
         float spacing = 12.0f;
         float rightX = availW + 4;
 
-        // Exit/Lock icon (rightmost)
         rightX -= exitW;
         ImGui::SetCursorPos(ImVec2(rightX, startY));
         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
@@ -141,7 +131,6 @@ namespace ui
                 exit(EXIT_SUCCESS);            // Other screens: exit app
         }
 
-        // Back button (left of exit, for settings only)
         if (show_back_button)
         {
             rightX -= (spacing + backW);
@@ -184,7 +173,6 @@ namespace ui
         bool popup_open = ImGui::IsPopupOpen(popup_id, ImGuiPopupFlags_None);
         if (pressed) ImGui::OpenPopupEx(popup_id, ImGuiPopupFlags_None);
 
-        // Animate
         ImGuiStorage* st = ImGui::GetStateStorage();
         float hover_t = st->GetFloat(base_id + 0x2001, 0.0f);
         float open_t  = st->GetFloat(base_id + 0x2002, 0.0f);
@@ -205,7 +193,6 @@ namespace ui
         dl->AddText(ImVec2(chevX, chevY), ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x,col_text.y,col_text.z,(1.f-open_t)*alpha)), ICON_MDI_CHEVRON_DOWN);
         dl->AddText(ImVec2(chevX, chevY), ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x,col_text.y,col_text.z,open_t*alpha)),       ICON_MDI_CHEVRON_UP);
 
-        // Compute popup width from longest item across all sections
         const float winPadX = 8.f;
         float popupW = 0.f;
         auto measure = [&](const char* const* items, int count) {
@@ -289,7 +276,7 @@ namespace ui
         ImGui::PopID();
     }
 
-    // Naked combo: just label + chevron, no background pill. Popup auto-sizes to content.
+    // label + chevron only, no pill background; popup auto-sizes to content
     static bool NakedCombo(const char* id, const char* label, const char* const* items, int count, int* current,
         bool dark, bool sectioned = false, const char* header = nullptr)
     {
@@ -300,7 +287,6 @@ namespace ui
         const ImVec4 col_muted = dark ? ImVec4(0.92f,0.92f,0.92f,0.55f) : ImVec4(0.10f,0.10f,0.10f,0.55f);
         const ImVec4 col_popup_bg = dark ? ImVec4(0.10f,0.10f,0.11f,1.f) : ImVec4(0.98f,0.98f,0.98f,1.f);
 
-        // Measure label
         ImVec2 labelSz = ImGui::CalcTextSize(label);
         ImVec2 chevSz  = ImGui::CalcTextSize(ICON_MDI_CHEVRON_DOWN);
         float totalW = labelSz.x + 4.f + chevSz.x;
@@ -315,7 +301,6 @@ namespace ui
         bool popup_open = ImGui::IsPopupOpen(popup_id, ImGuiPopupFlags_None);
         if (pressed) ImGui::OpenPopupEx(popup_id, ImGuiPopupFlags_None);
 
-        // Animate
         ImGuiStorage* st = ImGui::GetStateStorage();
         ImGuiID base_id = ImGui::GetItemID();
         float hover_t = st->GetFloat(base_id + 0x3001, 0.0f);
@@ -332,7 +317,6 @@ namespace ui
         float textY = pos.y + (h - labelSz.y) * 0.5f;
         dl->AddText(ImVec2(pos.x, textY), textCol, label);
 
-        // Chevron with rotation crossfade
         float chevX = pos.x + labelSz.x + 4.f;
         float chevY = pos.y + (h - chevSz.y) * 0.5f;
         float a_down = (1.f - open_t) * alpha;
@@ -340,12 +324,11 @@ namespace ui
         dl->AddText(ImVec2(chevX, chevY), ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x,col_text.y,col_text.z,a_down)), ICON_MDI_CHEVRON_DOWN);
         dl->AddText(ImVec2(chevX, chevY), ImGui::ColorConvertFloat4ToU32(ImVec4(col_text.x,col_text.y,col_text.z,a_up)),   ICON_MDI_CHEVRON_UP);
 
-        // Popup — auto-width based on content
         const float winPadX = 8.f;
         float popupW = 0.f;
         for (int i = 0; i < count; i++)
         {
-            float w = ImGui::CalcTextSize(items[i]).x + 22.f + 10.f + winPadX * 2.f; // dot offset + right pad + window padding
+            float w = ImGui::CalcTextSize(items[i]).x + 22.f + 10.f + winPadX * 2.f; // dot + right pad + win padding
             if (w > popupW) popupW = w;
         }
         popupW = ImMax(popupW, totalW);
@@ -420,8 +403,7 @@ namespace ui
     static void DrawViewDropdown(ui::ShellState& s)
     {
         static const char* viewLabels[] = { "List", "Tiles", "Table", "Three-Pane" };
-        // Dropdown order: List, Tiles, Table, Three-Pane
-        // Enum values:    Detailed=1, Tiles=2, Table=4, ThreePane=3
+        // dropdown order != enum values: Detailed=1, Tiles=2, ThreePane=3, Table=4
         static const ui::ViewMode dropdownToMode[] = {
             ui::ViewMode::Detailed, ui::ViewMode::Tiles, ui::ViewMode::Table, ui::ViewMode::ThreePane
         };
@@ -441,7 +423,6 @@ namespace ui
         const int count = (int)s.db_labels.size();
         s.active_db = ImClamp(s.active_db, 0, count - 1);
 
-        // Build a C array of labels for NakedCombo
         const char* labels[16];
         int n = ImMin(count, 16);
         for (int i = 0; i < n; ++i)
@@ -475,12 +456,8 @@ namespace ui
             const ImGuiHoveredFlags tipFlags =
                 ImGuiHoveredFlags_Stationary | ImGuiHoveredFlags_AllowWhenDisabled;
 
-            // ============================================================
-            // MUTATING BULK ACTIONS
-            // ============================================================
             ImGui::SameLine(0, gap);
 
-            // Delete selected
             ImGui::BeginDisabled(s.read_only);
             if (StyledButton("##sel_delete", ICON_MDI_DELETE, ImVec2(0, btnH), btnR))
                 s.bulk_delete_clicked = true;
@@ -490,7 +467,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Pin selected
             ImGui::BeginDisabled(s.read_only);
             if (StyledButton("##sel_pin", ICON_MDI_PIN, ImVec2(0, btnH), btnR))
                 s.bulk_pin_clicked = true;
@@ -500,7 +476,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Unpin selected
             ImGui::BeginDisabled(s.read_only);
             if (StyledButton("##sel_unpin", ICON_MDI_PIN_OFF, ImVec2(0, btnH), btnR))
                 s.bulk_unpin_clicked = true;
@@ -510,7 +485,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Favorite selected
             ImGui::BeginDisabled(s.read_only);
             if (StyledButton("##sel_fav", ICON_MDI_HEART, ImVec2(0, btnH), btnR))
                 s.bulk_fav_clicked = true;
@@ -520,7 +494,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Unfavorite selected
             ImGui::BeginDisabled(s.read_only);
             if (StyledButton("##sel_unfav", ICON_MDI_HEART_OFF, ImVec2(0, btnH), btnR))
                 s.bulk_unfav_clicked = true;
@@ -528,9 +501,6 @@ namespace ui
             if (ImGui::IsItemHovered(tipFlags))
                 SetTooltipPadded(s.read_only ? "Read-only enabled" : "Unfavorite selected");
 
-            // ============================================================
-            // GROUP APPLY (mutating)
-            // ============================================================
             ImGui::SameLine(0, 12);
 
             ImGui::BeginDisabled(s.read_only);
@@ -540,7 +510,6 @@ namespace ui
             if (ImGui::IsItemHovered(tipFlags))
                 SetTooltipPadded(s.read_only ? "Read-only enabled" : "Set group");
 
-            // Bulk group popup
             ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 8.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
@@ -556,7 +525,6 @@ namespace ui
                 ImGui::PopFont();
                 ImGui::Separator();
 
-                // Existing groups
                 for (const auto& g : s.groups)
                 {
                     if (g == "Filter" || g == "All") continue;
@@ -572,7 +540,6 @@ namespace ui
                     if (BarMenuItem(label, false, true))
                     {
                         s.bulk_group_index = 0;
-                        // Find index for this group
                         for (int i = 0; i < (int)s.groups.size(); i++)
                             if (s.groups[i] == g) { s.bulk_group_index = i; break; }
                         s.bulk_set_group_clicked = true;
@@ -586,7 +553,6 @@ namespace ui
             ImGui::PopStyleColor(2);
             ImGui::PopStyleVar(4);
 
-            // Bulk tag button
             ImGui::SameLine(0, gap);
             ImGui::BeginDisabled(s.read_only);
             if (StyledButton("##sel_tag", ICON_MDI_TAG, ImVec2(0, btnH), btnR))
@@ -595,7 +561,6 @@ namespace ui
             if (ImGui::IsItemHovered(tipFlags))
                 SetTooltipPadded(s.read_only ? "Read-only enabled" : "Add/remove tags");
 
-            // Bulk tag popup
             ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 8.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
@@ -612,7 +577,6 @@ namespace ui
                 ImGui::PopFont();
                 ImGui::Separator();
 
-                // Existing tags as toggleable items
                 for (const auto& tag : s.all_tags)
                 {
                     auto tcIt = s.sb_tag_counts.find(tag);
@@ -628,7 +592,6 @@ namespace ui
                 if (!s.all_tags.empty())
                     ImGui::Separator();
 
-                // New tag input
                 {
                     static std::string s_new_tag_buf;
                     ImGui::SetNextItemWidth(140.0f);
@@ -636,7 +599,6 @@ namespace ui
                         ImGuiInputTextFlags_EnterReturnsTrue);
                     if (entered && !s_new_tag_buf.empty())
                     {
-                        // Trim
                         while (!s_new_tag_buf.empty() && s_new_tag_buf.front() == ' ') s_new_tag_buf.erase(s_new_tag_buf.begin());
                         while (!s_new_tag_buf.empty() && s_new_tag_buf.back() == ' ') s_new_tag_buf.pop_back();
                         if (!s_new_tag_buf.empty())
@@ -652,12 +614,8 @@ namespace ui
             ImGui::PopStyleColor(2);
             ImGui::PopStyleVar(4);
 
-            // ============================================================
-            // NON-MUTATING ACTIONS
-            // ============================================================
             ImGui::SameLine(0, 12);
 
-            // Expand all
             if (StyledButton("##sel_expand", ICON_MDI_ARROW_EXPAND_VERTICAL, ImVec2(0, btnH), btnR))
             {
                 for (auto idx : g_selected)
@@ -668,7 +626,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Collapse all
             if (StyledButton("##sel_collapse", ICON_MDI_ARROW_COLLAPSE_VERTICAL, ImVec2(0, btnH), btnR))
             {
                 g_open.clear();
@@ -682,7 +639,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Select all
             if (StyledButton("##sel_all", ICON_MDI_SELECT_ALL, ImVec2(0, btnH), btnR))
                 s.select_all_clicked = true;
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
@@ -690,7 +646,6 @@ namespace ui
 
             ImGui::SameLine(0, gap);
 
-            // Clear selection
             if (StyledButton("##sel_clear", ICON_MDI_CLOSE, ImVec2(0, btnH), btnR))
                 s.clear_selection_clicked = true;
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
@@ -716,11 +671,9 @@ namespace ui
         const float btnGap = 10.0f;
         const float containerRounding = 8.0f;
 
-        // Measure actual content widths
         const float scopeComboW = 95.0f;
         const float pillTabsW = 180.0f;
         const float searchW = 120.0f + 20.0f; // input + icon
-        // Sort/View are naked combos: label text + 4px + chevron
         const float sortDropW = ImGui::CalcTextSize(ICON_MDI_SORT " Sort").x + 4.f + ImGui::CalcTextSize(ICON_MDI_CHEVRON_DOWN).x;
         const float viewDropW = ImGui::CalcTextSize(ICON_MDI_FORMAT_LIST_BULLETED " View").x + 4.f + ImGui::CalcTextSize(ICON_MDI_CHEVRON_DOWN).x;
         const float vaultDropW = ImGui::CalcTextSize(ICON_MDI_DATABASE " Vault").x + 4.f + ImGui::CalcTextSize(ICON_MDI_CHEVRON_DOWN).x;
@@ -737,21 +690,17 @@ namespace ui
         const float availW = ImGui::GetContentRegionAvail().x - 2.0f;
         const float startX = ImGui::GetCursorPosX();
 
-        // Container 3 is anchored to the right edge
         const float container3Right = startX + availW;
         const float actionsX = container3Right - container3W + containerPad;
 
         s.sort_mode = ImClamp(s.sort_mode, 0, 3);
-        // sort_mode 3 (Recent) is only valid in three-pane sidebar; clamp to 2 for pill tabs
+        // sort_mode 3 (Recent) only valid in three-pane sidebar
         if (!isThreePane && s.sort_mode == 3) s.sort_mode = 2;
         const float rowY = ImGui::GetCursorPosY();
 
         dl->ChannelsSplit(2);
         dl->ChannelsSetCurrent(1);
 
-        // ============================================================
-        // Container 1: Scope + Filter (hidden in ThreePane — sidebar replaces it)
-        // ============================================================
         ImVec2 c1Min{}, c1Max{};
         if (!isThreePane)
         {
@@ -770,7 +719,6 @@ namespace ui
                 PillTabs("##filter_tabs", filterLabels, 3, filterIdx, pillAnim, 4.0f, &rightClicked);
                 s.sort_mode = filterIdx;
 
-                // Right-click on tab 0 or 1 → open customization popup
                 if (rightClicked == 0 || rightClicked == 1)
                 {
                     s_pill_right_clicked = rightClicked;
@@ -778,7 +726,7 @@ namespace ui
                 }
             }
 
-            // Pill tab customization popup (outside BeginGroup so popup can overflow)
+            // outside BeginGroup so popup can overflow
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,  ImVec2(8, 6));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(8, 6));
@@ -789,12 +737,11 @@ namespace ui
             if (s_pill_right_clicked >= 0 && ImGui::BeginPopup("##pill_tab_popup"))
             {
                 PopupStyleBegin();
-                // The other tab's current value — skip it to prevent duplicates
+                // skip the other tab's current value to prevent duplicates
                 const std::string& otherTab = (s_pill_right_clicked == 0) ? s.pill_tab_1 : s.pill_tab_0;
 
                 ImGui::TextDisabled("Set filter tab");
 
-                // Built-in options (skip if other tab already uses it)
                 if (otherTab != "Pinned")
                 {
                     if (BarMenuItem(ICON_MDI_PIN " Pinned", false))
@@ -820,13 +767,12 @@ namespace ui
                     }
                 }
 
-                // Custom groups from the vault (skip if other tab already uses it)
                 bool hasGroups = false;
                 for (const auto& g : s.groups)
                 {
                     if (g.empty() || g == "Filter" || g == "---") continue;
-                    if (g[0] == '@') continue; // skip type filters
-                    if (g == otherTab) continue; // skip duplicate
+                    if (g[0] == '@') continue;
+                    if (g == otherTab) continue;
                     if (!hasGroups) { ImGui::Separator(); hasGroups = true; }
                     if (BarMenuItem(g.c_str(), false))
                     {
@@ -850,19 +796,14 @@ namespace ui
             c1Max = ImGui::GetItemRectMax();
         }
 
-        // Position container 2: centered in the space between C1 and C3
         float c2SpaceStart = isThreePane ? startX : (c1Max.x - ImGui::GetWindowPos().x + containerPad);
         float c2SpaceEnd   = actionsX - containerPad;
         float c2SpaceW     = c2SpaceEnd - c2SpaceStart;
         float container2X  = c2SpaceStart + (c2SpaceW - container2W) * 0.5f;
         ImGui::SetCursorPos(ImVec2(container2X, rowY));
 
-        // ============================================================
-        // Container 2: Search + Sort + View
-        // ============================================================
         ImGui::BeginGroup();
         {
-            // Search field: magnifying glass left, input, X clear button right
             {
                 float inputH = ImGui::GetFrameHeight();
                 ImVec2 iconPos = ImGui::GetCursorScreenPos();
@@ -894,7 +835,6 @@ namespace ui
                 }
             }
 
-            // Right-click popup for search filter field
             if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
                 ImGui::OpenPopup("##search_filter_popup");
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 10));
@@ -926,18 +866,13 @@ namespace ui
             ImGui::SameLine(0, innerGap);
             DrawViewDropdown(s);
 
-            // Vault combo moved into three-dot menu
         }
         ImGui::EndGroup();
         ImVec2 c2Min = ImGui::GetItemRectMin();
         ImVec2 c2Max = ImGui::GetItemRectMax();
 
-        // Position action buttons anchored to right
         ImGui::SetCursorPos(ImVec2(actionsX, rowY));
 
-        // ============================================================
-        // Container 3: Action buttons (transparent container for spacing)
-        // ============================================================
         ImGui::BeginGroup();
         {
             if (IconButtonGhost("ctrlrow_add", ICON_MDI_ACCOUNT_PLUS, btnSize, !s.read_only))
@@ -987,7 +922,6 @@ namespace ui
             if (BarMenuItem(ICON_MDI_TRASH_CAN " Trash Bin", false))
                 s.trash_modal_open = true;
 
-            // Save + Undo on the same line as small buttons
             {
                 DrawPopupSep();
                 ImGui::Spacing();
@@ -999,7 +933,6 @@ namespace ui
 
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
 
-                // Save button
                 if (!canSave) ImGui::BeginDisabled();
                 if (StyledButton("##ctrl_save", ICON_MDI_CONTENT_SAVE, ImVec2(btnW, btnH)))
                     s.footer_save_clicked = true;
@@ -1008,7 +941,6 @@ namespace ui
 
                 ImGui::SameLine(0, 6.0f);
 
-                // Undo button
                 if (!canUndo) ImGui::BeginDisabled();
                 if (StyledButton("##ctrl_undo", ICON_MDI_HISTORY, ImVec2(btnW, btnH)))
                     s.undo_clicked = true;
@@ -1025,7 +957,6 @@ namespace ui
         ImGui::PopStyleVar(3);
 
         ImGui::PopStyleColor(2);
-        // Draw container backgrounds (theme-aware)
         dl->ChannelsSetCurrent(0);
         const ImU32 containerBg = GetControlsContainerBg();
         if (!isThreePane)
@@ -1048,7 +979,6 @@ namespace ui
         ImGui::EndDisabled();
 		ImGui::Unindent(6.f);
 
-        // 1px separator line beneath controls row
         {
             ImVec2 winPos = ImGui::GetWindowPos();
             ImVec2 winSize = ImGui::GetWindowSize();
@@ -1063,27 +993,22 @@ namespace ui
         //ImGui::Dummy(ImVec2(0, 6));
     }
 
-    // ============================================================
-    // SETTINGS PAGE
-    // ============================================================
     void RenderSettingsPage(ui::ShellState& s)
     {
         if (!s.settings_modal_open) return;
 
-        // Open the popup on the frame settings_modal_open becomes true
         if (!ImGui::IsPopupOpen("Settings###settings_modal"))
             ImGui::OpenPopup("Settings###settings_modal");
 
         g_category_card_id = 0;
         static ImGuiID g_settings_selected_row = 0;
 
-        // Override card bg to be lighter inside the settings modal
+        // slightly lighter card bg inside the modal
         ImVec4 savedCardDark  = s.card_bg_dark;
         ImVec4 savedCardLight = s.card_bg_light;
         s.card_bg_dark  = ImVec4(44/255.0f, 43/255.0f, 48/255.0f, 1.0f);
         s.card_bg_light = ImVec4(243/255.0f, 243/255.0f, 246/255.0f, 1.0f);
 
-        // ---- Modal boilerplate ----
         bool dark = IsDarkTheme();
         ImU32 popupBg = dark ? theme::ModalBg.dark : theme::ModalBg.light;
         ImU32 dimBg   = colors::DimOverlayLight;
@@ -1110,7 +1035,6 @@ namespace ui
             return;
         }
 
-        // Escape to close
         if (ImGui::IsKeyPressed(ImGuiKey_Escape))
         {
             s.settings_modal_open = false;
@@ -1124,7 +1048,6 @@ namespace ui
             return;
         }
 
-        // ---- Custom header: "Settings" title + close X button ----
         ImGui::PushFont(render::FontLarge);
         ImGui::TextUnformatted("Settings");
         ImGui::PopFont();
@@ -1150,7 +1073,6 @@ namespace ui
 
         ImGui::Spacing();
 
-        // Settings tabs (pill style matching add/edit modal) + search icon button
         static char s_settings_search_buf[128] = {};
         static bool s_settings_search_focus = false;
 
@@ -1170,7 +1092,6 @@ namespace ui
             ImU32 cardBg = dk ? IM_COL32(60, 60, 66, 255) : IM_COL32(255, 255, 255, 255);
             ImU32 cardShadow = dk ? IM_COL32(0, 0, 0, 70) : IM_COL32(0, 0, 0, 35);
 
-            // Calculate pill width
             float pillW = 0.0f;
             for (int i = 0; i < tabCount; i++)
             {
@@ -1181,7 +1102,6 @@ namespace ui
             float iconBtnSize = tabH;
             float totalW = pillW + searchGap + iconBtnSize;
 
-            // Center
             float availWidth = ImGui::GetContentRegionAvail().x;
             float offsetX = (availWidth - totalW) * 0.5f;
             if (offsetX > 0.0f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offsetX);
@@ -1189,13 +1109,11 @@ namespace ui
             ImDrawList* dl = ImGui::GetWindowDrawList();
             ImVec2 pillPos = ImGui::GetCursorScreenPos();
 
-            // Pill background
             dl->AddRectFilled(pillPos, ImVec2(pillPos.x + pillW, pillPos.y + tabH), pillBg, pillR);
 
             float segW = pillW / tabCount;
             int activeIdx = s.settings_tab_index;
 
-            // Active card
             {
                 float cardX = pillPos.x + activeIdx * segW + pillPad;
                 float cardY = pillPos.y + pillPad;
@@ -1211,7 +1129,6 @@ namespace ui
                     cardBg, cardR);
             }
 
-            // Tab segments
             for (int i = 0; i < tabCount; i++)
             {
                 bool active = (i == activeIdx);
@@ -1244,10 +1161,8 @@ namespace ui
                 dl->AddText(ImVec2(tx, ty), textCol, buf);
             }
 
-            // Advance cursor past pill
             ImGui::SetCursorScreenPos(ImVec2(pillPos.x + pillW, pillPos.y));
 
-            // Search icon button
             ImGui::SameLine(0, searchGap);
             float iconNudge = (iconBtnSize - tabH) * 0.5f;
             ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (tabH - iconBtnSize) * 0.5f);
@@ -1261,7 +1176,6 @@ namespace ui
             s_settings_search_focus = true;
         }
 
-        // ---- Search popup ----
         struct SettingsSearchEntry {
             const char* title;
             const char* subtitle;
@@ -1306,7 +1220,7 @@ namespace ui
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 12.f);
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IsDarkTheme() ? theme::PopupBg.dark : theme::PopupBg.light);
         ImGui::SetNextWindowSizeConstraints(ImVec2(300, 0), ImVec2(300, FLT_MAX));
-        // Anchor popup so right edge aligns with the search button
+        // right edge of popup aligns with the search button
         ImVec2 btnMax = ImGui::GetItemRectMax();
         ImGui::SetNextWindowPos(ImVec2(btnMax.x - 300, btnMax.y + 4.0f), ImGuiCond_Appearing);
         if (ImGui::BeginPopup("##settings_search_popup"))
@@ -1377,14 +1291,11 @@ namespace ui
 
                         float cx = rr.Min.x + 6.0f;
                         float cy = rr.Min.y + (rowH - ImGui::GetTextLineHeight()) * 0.5f;
-                        // Icon
                         ImGui::GetWindowDrawList()->AddText(ImVec2(cx, cy), ImGui::GetColorU32(ImGuiCol_TextDisabled), e.icon);
                         cx += ImGui::CalcTextSize(e.icon).x + 8.0f;
-                        // Title
                         float textMaxX = rr.Max.x - 6.0f;
                         ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(cx, rr.Min.y + 6.0f),
                             ImGui::GetColorU32(ImGuiCol_Text), e.title, nullptr, textMaxX - cx);
-                        // Subtitle
                         if (e.subtitle)
                         {
                             ImGui::PushFont(render::FontSmall);
@@ -1418,12 +1329,11 @@ namespace ui
 
         ImGui::Dummy(ImVec2(0, 16));
 
-        // Content area based on selected tab
         float avail_w = ImGui::GetContentRegionAvail().x;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::BeginChild("##settings_content", ImVec2(avail_w, 0), ImGuiChildFlags_None);
 
-        // Close combo popups when scrolling
+        // close combo popups when user scrolls
         {
             static float s_prev_scroll_y = 0.0f;
             float curScroll = ImGui::GetScrollY();
@@ -1438,14 +1348,8 @@ namespace ui
 
         if (s.settings_tab_index == 2)
         {
-            // ============================================================
-            // BACKUP TAB
-            // ============================================================
-
-            // ---- Backup Settings Card ----
             BeginCategoryCard("Local Backup", "Configure offline backups");
 
-            // Auto-backup toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("auto_backup");
@@ -1460,7 +1364,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Keep backups row with vertical stepper
             {
                 const float rowH = 80.0f;
                 const float padX = 18.0f;
@@ -1470,12 +1373,10 @@ namespace ui
                 ImDrawList* sdl = ImGui::GetWindowDrawList();
                 float cy = rowMin.y + rowH * 0.5f;
 
-                // Icon
                 float iconX = rowMin.x + padX;
                 ImVec2 iconSz = ImGui::CalcTextSize(ICON_MDI_DATABASE);
                 sdl->AddText(ImVec2(iconX, cy - iconSz.y * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), ICON_MDI_DATABASE);
 
-                // Title + subtitle
                 float textX = iconX + iconSz.x + 10.0f;
                 sdl->AddText(ImVec2(textX, rowMin.y + 28.0f), ImGui::GetColorU32(ImGuiCol_Text), "Keep backups");
                 ImGui::PushFont(render::FontSmall);
@@ -1483,7 +1384,6 @@ namespace ui
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), "Maximum backup files to retain");
                 ImGui::PopFont();
 
-                // Stepper right-aligned
                 float stepW = 56.0f;
                 float stepX = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x - stepW - padX;
                 ImGui::SetCursorScreenPos(ImVec2(stepX, rowMin.y + (rowH - 70.0f) * 0.5f));
@@ -1494,7 +1394,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Last backup info row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("last_backup");
@@ -1508,10 +1407,8 @@ namespace ui
 
             EndCategoryCard();
 
-            // ---- Backup Files Card ----
             BeginCategoryCard("Local Backup Files", "Select a backup to restore");
 
-            // Create Backup row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("manual_backup");
@@ -1527,12 +1424,10 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Browse for backup file
             {
                 std::string sub;
                 if (!s.footer_browse_backup_path.empty())
                 {
-                    // Show just the filename
                     size_t pos = s.footer_browse_backup_path.find_last_of("\\/");
                     sub = (pos != std::string::npos)
                         ? s.footer_browse_backup_path.substr(pos + 1)
@@ -1555,7 +1450,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Restore row
             {
                 bool canRestore = !s.footer_browse_backup_path.empty();
 
@@ -1589,14 +1483,8 @@ namespace ui
         }
         else if (s.settings_tab_index == 0)
         {
-            // ============================================================
-            // VAULT TAB
-            // ============================================================
-
-            // ---- Vault Actions Card ----
             BeginCategoryCard("Vault Actions", "Manage your vault");
 
-            // Lock vault row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("lock_vault");
@@ -1612,7 +1500,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Create new vault row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("create_vault");
@@ -1628,7 +1515,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Open vault row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("open_vault");
@@ -1644,7 +1530,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Delete vault row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("delete_vault");
@@ -1661,10 +1546,8 @@ namespace ui
 
             EndCategoryCard();
 
-            // ---- Vault Settings Card ----
             BeginCategoryCard("Settings", "Vault behavior");
 
-            // Always on Top toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("always_on_top");
@@ -1683,7 +1566,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Auto-save row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("autosave");
@@ -1698,7 +1580,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Auto-open Last Vault toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("auto_open_vault");
@@ -1713,7 +1594,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Hover expand toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("hover_expand");
@@ -1728,7 +1608,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Minimize to Tray toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("minimize_to_tray");
@@ -1743,7 +1622,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Start on Boot toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("start_on_boot");
@@ -1758,7 +1636,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Start Minimized toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("start_minimized");
@@ -1774,13 +1651,11 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Read-only mode row
             {
                 static bool s_read_only = false;
                 static bool s_read_only_pending = false;
                 s_read_only = s.read_only;
 
-                // Check if re-prompt was approved for disabling read-only
                 if (s_read_only_pending && IsRepromptApproved(RepromptAction::DisableReadOnly))
                 {
                     s.footer_set_read_only = true;
@@ -1800,7 +1675,7 @@ namespace ui
                 auto result = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
                 if (result.action_used)
                 {
-                    // Turning OFF read-only requires re-prompt
+                    // turning off requires re-prompt
                     if (s.read_only && !s_read_only)
                     {
                         s_read_only_pending = true;
@@ -1812,13 +1687,11 @@ namespace ui
                         }
                         else
                         {
-                            // Re-prompt needed, revert toggle
-                            s_read_only = true;
+                            s_read_only = true; // revert toggle while waiting for re-prompt
                         }
                     }
                     else
                     {
-                        // Turning ON read-only doesn't need re-prompt
                         s.footer_set_read_only = true;
                         s.footer_set_read_only_value = s_read_only;
                     }
@@ -1827,10 +1700,8 @@ namespace ui
 
             EndCategoryCard();
 
-            // ---- Style Card ----
             BeginCategoryCard("Style", "Appearance and layout");
 
-            // Theme toggle row
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("theme_toggle");
@@ -1847,14 +1718,13 @@ namespace ui
                     cfg::set_theme(s.dark_theme ? 0 : 1);
                     render::ApplyTheme(s.dark_theme);
 
-                    // Re-apply user's custom WindowBg on top of theme defaults
+                    // re-apply user's custom WindowBg on top of theme defaults
                     const ImVec4& wb = s.dark_theme ? s.window_bg_dark : s.window_bg_light;
                     ImGui::GetStyle().Colors[ImGuiCol_WindowBg] = wb;
                 }
                 DrawRowDivider();
             }
 
-            // Group count indicator
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("show_group_count");
@@ -1868,13 +1738,11 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Font Scale (DotSlider)
             {
                 static const float fontScaleSteps[] = { 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f };
                 static const int fontScaleCount = IM_ARRAYSIZE(fontScaleSteps);
 
                 static int fontIdx = 2;
-                // Sync index from stored scale
                 for (int i = 0; i < fontScaleCount; i++)
                     if (fabsf(s.font_scale - fontScaleSteps[i]) < 0.01f) { fontIdx = i; break; }
 
@@ -1886,12 +1754,10 @@ namespace ui
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 float cy = rowMin.y + rowH * 0.5f;
 
-                // Icon
                 float iconX = rowMin.x + padX;
                 ImVec2 iconSz = ImGui::CalcTextSize(ICON_MDI_FORMAT_SIZE);
                 dl->AddText(ImVec2(iconX, cy - iconSz.y * 0.5f), ImGui::GetColorU32(ImGuiCol_TextDisabled), ICON_MDI_FORMAT_SIZE);
 
-                // Title + subtitle
                 float textX = iconX + iconSz.x + 10.0f;
                 char fontSubBuf[32];
                 snprintf(fontSubBuf, sizeof(fontSubBuf), "%.1fx", fontScaleSteps[fontIdx]);
@@ -1901,10 +1767,9 @@ namespace ui
                     ImGui::GetColorU32(ImGuiCol_TextDisabled), fontSubBuf);
                 ImGui::PopFont();
 
-                // DotSlider right-aligned, vertically centered in row
                 float dotW = (fontScaleCount - 1) * 22.0f + 24.0f + 2 * 24.0f + 2 * 4.0f;
                 float dotX = ImGui::GetContentRegionMax().x + ImGui::GetWindowPos().x - dotW - padX;
-                float dotH = 24.0f; // arrowBtnH
+                float dotH = 24.0f;
                 ImGui::SetCursorScreenPos(ImVec2(dotX, rowMin.y + (rowH - dotH) * 0.5f));
                 if (DotSlider("##font_dots", &fontIdx, fontScaleCount))
                 {
@@ -1916,7 +1781,6 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Privacy Mode
             {
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("privacy_mode");
@@ -1933,20 +1797,13 @@ namespace ui
         }
         else if (s.settings_tab_index == 1)
         {
-            // ============================================================
-            // SECURITY TAB
-            // ============================================================
-
-            // ---- Session Security Card ----
             BeginCategoryCard("Session Security", "Clipboard and lock behavior");
 
-            // Clipboard auto-clear row
             {
                 static const char* clipboard_options[] = { "Never", "10s", "20s", "60s" };
                 static const int clipboard_values[] = { 0, 10, 20, 60 };
                 static int s_clipboard_index = 2; // default 20s
 
-                // Initialize from config
                 static bool s_clipboard_init = false;
                 if (!s_clipboard_init) {
                     int delay = cfg::get_clipboard_clear_delay();
@@ -1976,13 +1833,11 @@ namespace ui
                 DrawRowDivider();
             }
 
-            // Auto-lock row
             {
                 static const char* autolock_options[] = { "Never", "1 min", "5 min", "15 min" };
                 static const int autolock_values[] = { 0, 60, 300, 900 };
                 static int s_autolock_index = 0; // default Never
 
-                // Initialize from config
                 static bool s_autolock_init = false;
                 if (!s_autolock_init) {
                     int timeout = cfg::get_auto_lock_timeout();
@@ -2013,7 +1868,6 @@ namespace ui
 
             EndCategoryCard();
 
-            // ---- Two-Factor Authentication Card ----
             BeginCategoryCard("Two-Factor Authentication", "Require authenticator code to unlock");
             {
                 bool twofa_on = twofa_ops::is_enabled();
@@ -2041,7 +1895,6 @@ namespace ui
             }
             EndCategoryCard();
 
-            // ---- 2FA Setup Modal (3-step) ----
             if (s.twofa_setup_open)
             {
                 ImGui::OpenPopup("Enable 2FA###enable_2fa_modal");
@@ -2066,7 +1919,6 @@ namespace ui
                 {
                     bool escape_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
-                    // Header with close text
                     ImGui::TextUnformatted(ICON_MDI_SHIELD_HALF_FULL "  Enable Two-Factor Authentication");
                     {
                         ImVec2 closeSz = ImGui::CalcTextSize(ICON_MDI_CLOSE);
@@ -2086,7 +1938,6 @@ namespace ui
                     }
                     ImGui::Dummy(ImVec2(0, 8));
 
-                    // Initialize on first open
                     if (s_2fa_step == 0 && s_2fa_data.totp_secret_b32.empty())
                     {
                         s_2fa_data = twofa_ops::generate_new();
@@ -2098,7 +1949,6 @@ namespace ui
 
                     if (s_2fa_step == 0)
                     {
-                        // Step 1: Show secret
                         ImGui::TextWrapped("Scan the QR code below in your authenticator app, or copy the secret manually.");
                         ImGui::Dummy(ImVec2(0, 6));
 
@@ -2148,7 +1998,6 @@ namespace ui
                     }
                     else if (s_2fa_step == 1)
                     {
-                        // Step 2: Verify code
                         ImGui::TextWrapped("Enter the 6-digit code from your authenticator to verify setup.");
                         ImGui::Dummy(ImVec2(0, 6));
 
@@ -2181,7 +2030,6 @@ namespace ui
                     }
                     else if (s_2fa_step == 2)
                     {
-                        // Step 3: Show recovery codes
                         ImGui::TextWrapped("Save these recovery codes in a safe place. Each can be used once if you lose your authenticator.");
                         ImGui::Dummy(ImVec2(0, 6));
 
@@ -2217,7 +2065,6 @@ namespace ui
                                 ShowToast("Failed to enable 2FA", ToastType::Error);
                             }
 
-                            // Reset state and close
                             s_2fa_step = 0;
                             s_2fa_data = twofa_ops::TwoFactorData{};
                             s_2fa_verify_code.clear();
@@ -2231,18 +2078,16 @@ namespace ui
                 }
                 else
                 {
-                    // Modal was closed (X or escape) — reset state
                     s_2fa_step = 0;
                     s_2fa_data = twofa_ops::TwoFactorData{};
                     s_2fa_verify_code.clear();
                     s_2fa_verify_error.clear();
                     ReleaseQRTexture();
                 }
-                ImGui::PopStyleVar(); // WindowPadding
-                ImGui::PopStyleColor(); // ModalWindowDimBg
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
             }
 
-            // ---- Disable 2FA Confirmation Modal ----
             {
                 ImVec2 center = ImGui::GetMainViewport()->GetCenter();
                 ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -2256,7 +2101,6 @@ namespace ui
                 {
                     bool escape_pressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
-                    // Header with close text
                     ImGui::TextUnformatted(ICON_MDI_SHIELD_HALF_FULL "  Disable Two-Factor Authentication");
                     {
                         ImVec2 closeSz = ImGui::CalcTextSize(ICON_MDI_CLOSE);
@@ -2292,19 +2136,17 @@ namespace ui
 
                     ImGui::EndPopup();
                 }
-                ImGui::PopStyleVar(); // WindowPadding
-                ImGui::PopStyleColor(); // ModalWindowDimBg
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
             }
 
-            // ---- Network & Privacy Card ----
             BeginCategoryCard("Network & Privacy", "This app is offline by default");
             {
-                // Cached favicon-cache stats; refreshed on first show, on toggle, on clear.
+                // favicon stats; refreshed on first show, toggle, and clear
                 static favicon::CacheStats s_np_stats;
                 static bool s_np_stats_ready = false;
                 if (!s_np_stats_ready) { s_np_stats = favicon::GetCacheStats(); s_np_stats_ready = true; }
 
-                // Website icons (favicons) toggle
                 {
                     SettingRowSpec row{};
                     row.id = ImGui::GetID("online_favicons");
@@ -2325,7 +2167,6 @@ namespace ui
                     DrawRowDivider();
                 }
 
-                // Online breach check toggle
                 {
                     SettingRowSpec row{};
                     row.id = ImGui::GetID("online_breach");
@@ -2343,7 +2184,6 @@ namespace ui
                     DrawRowDivider();
                 }
 
-                // Favicon cache transparency + clear
                 {
                     static char s_np_sub[80];
                     double bytes = (double)s_np_stats.total_bytes;
@@ -2376,10 +2216,8 @@ namespace ui
             }
             EndCategoryCard();
 
-            // ---- Security Center Card ----
             BeginCategoryCard("Password Information", "Password health overview");
 
-            // Reused passwords
             {
                 char sub[64]; snprintf(sub, sizeof(sub), "%d credential%s sharing a password",
                     s.sec_reused_count, s.sec_reused_count == 1 ? "" : "s");
@@ -2465,7 +2303,6 @@ namespace ui
 
             EndCategoryCard();
 
-            // ---- Self-Destruct Card ----
             BeginCategoryCard("Self-Destruct", "Delete app data on exit");
             {
                 static const char* sd_options[] = { "Off", "Exe Only", "Exe + Config", "Everything" };
@@ -2502,13 +2339,11 @@ namespace ui
             }
             EndCategoryCard();
 
-            // ---- Security Card (Master Re-prompt) ----
             BeginCategoryCard("Security", "Master password re-verification");
 
-            // Track which setting is pending disable (0=none, 1=reveal, 2=export, 3=readonly)
+            // 0=none, 1=reveal, 2=export, 3=readonly, 4=notes
             static int s_pending_disable_setting = 0;
 
-            // Check if disable was approved
             if (s_pending_disable_setting != 0 && IsRepromptApproved(RepromptAction::DisableSecuritySetting))
             {
                 switch (s_pending_disable_setting)
@@ -2522,10 +2357,8 @@ namespace ui
                 s_pending_disable_setting = 0;
             }
 
-            // Require password to reveal
             {
                 static bool s_reprompt_reveal = cfg::get_reprompt_reveal_password();
-                // Refresh from config in case approval changed it
                 s_reprompt_reveal = cfg::get_reprompt_reveal_password();
 
                 SettingRowSpec row{};
@@ -2541,13 +2374,11 @@ namespace ui
                 {
                     if (s_reprompt_reveal)
                     {
-                        // Enabling - allow immediately
                         cfg::set_reprompt_reveal_password(true);
                     }
                     else
                     {
-                        // Disabling - require re-prompt
-                        s_reprompt_reveal = true; // Revert UI until approved
+                        s_reprompt_reveal = true; // revert until approved
                         s_pending_disable_setting = 1;
                         RequestReprompt(RepromptAction::DisableSecuritySetting, "");
                     }

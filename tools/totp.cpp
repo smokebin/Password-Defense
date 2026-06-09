@@ -1,5 +1,4 @@
-// totp.cpp
-// RFC 6238 TOTP implementation with minimal SHA-1 (FIPS 180-4) and HMAC-SHA1 (RFC 2104)
+// totp.cpp — RFC 6238 TOTP; SHA-1 (FIPS 180-4), HMAC-SHA1 (RFC 2104)
 
 #include "totp.h"
 #include <cstring>
@@ -10,9 +9,6 @@
 
 namespace totp {
 
-// ============================================================
-// SHA-1 (FIPS 180-4) — minimal implementation
-// ============================================================
 namespace {
 
 struct SHA1_CTX {
@@ -100,9 +96,7 @@ static void sha1_final(SHA1_CTX& ctx, uint8_t digest[20])
     }
 }
 
-// ============================================================
 // HMAC-SHA1 (RFC 2104)
-// ============================================================
 static void hmac_sha1(const uint8_t* key, size_t key_len,
                       const uint8_t* msg, size_t msg_len,
                       uint8_t out[20])
@@ -111,17 +105,15 @@ static void hmac_sha1(const uint8_t* key, size_t key_len,
     uint8_t k_pad[BLOCK];
     std::memset(k_pad, 0, BLOCK);
 
-    // If key > block size, hash it first
     if (key_len > BLOCK) {
         SHA1_CTX hctx;
         sha1_init(hctx);
         sha1_update(hctx, key, key_len);
-        sha1_final(hctx, k_pad); // k_pad[0..19] = H(key)
+        sha1_final(hctx, k_pad);
     } else {
         std::memcpy(k_pad, key, key_len);
     }
 
-    // Inner hash: H((K ^ ipad) || msg)
     uint8_t ipad[BLOCK], opad[BLOCK];
     for (size_t i = 0; i < BLOCK; i++) {
         ipad[i] = k_pad[i] ^ 0x36;
@@ -135,30 +127,23 @@ static void hmac_sha1(const uint8_t* key, size_t key_len,
     uint8_t inner[20];
     sha1_final(ctx, inner);
 
-    // Outer hash: H((K ^ opad) || inner)
     sha1_init(ctx);
     sha1_update(ctx, opad, BLOCK);
     sha1_update(ctx, inner, 20);
     sha1_final(ctx, out);
 }
 
-// ============================================================
-// Base32 lookup
-// ============================================================
 static int base32_val(char ch)
 {
     if (ch >= 'A' && ch <= 'Z') return ch - 'A';
     if (ch >= 'a' && ch <= 'z') return ch - 'a';
     if (ch >= '2' && ch <= '7') return ch - '2' + 26;
-    return -1; // invalid
+    return -1;
 }
 
 } // anonymous namespace
 
-// ============================================================
-// SHA-1 digest (public wrapper for HIBP breach check)
-// ============================================================
-
+// public wrapper — used by HIBP breach check
 void sha1_digest(const uint8_t* data, size_t len, uint8_t out[20])
 {
     SHA1_CTX ctx;
@@ -167,10 +152,6 @@ void sha1_digest(const uint8_t* data, size_t len, uint8_t out[20])
     sha1_final(ctx, out);
 }
 
-// ============================================================
-// Public API
-// ============================================================
-
 std::vector<uint8_t> base32_decode(const std::string& input)
 {
     std::vector<uint8_t> out;
@@ -178,11 +159,10 @@ std::vector<uint8_t> base32_decode(const std::string& input)
     int value = 0;
 
     for (char ch : input) {
-        // Strip whitespace, dashes, padding
         if (ch == ' ' || ch == '-' || ch == '=' || ch == '\t' || ch == '\n' || ch == '\r')
             continue;
         int v = base32_val(ch);
-        if (v < 0) continue; // skip invalid chars
+        if (v < 0) continue;
         value = (value << 5) | v;
         bits += 5;
         if (bits >= 8) {
@@ -195,33 +175,29 @@ std::vector<uint8_t> base32_decode(const std::string& input)
 
 std::string generate_code(const std::vector<uint8_t>& secret, int64_t unix_sec, int period, int digits)
 {
-    // RFC 6238: T = floor(unix_sec / period)
+    // T = floor(unix_sec / period), per RFC 6238
     uint64_t T = (uint64_t)(unix_sec / period);
 
-    // Encode T as big-endian 8 bytes
-    uint8_t msg[8];
+    uint8_t msg[8];  // T as big-endian 8 bytes
     for (int i = 7; i >= 0; i--) {
         msg[i] = (uint8_t)(T & 0xFF);
         T >>= 8;
     }
 
-    // HMAC-SHA1
     uint8_t hash[20];
     hmac_sha1(secret.data(), secret.size(), msg, 8, hash);
 
-    // Dynamic truncation (RFC 4226 section 5.4)
+    // dynamic truncation — RFC 4226 §5.4
     int offset = hash[19] & 0x0F;
     uint32_t code = ((uint32_t)(hash[offset] & 0x7F) << 24)
                   | ((uint32_t)hash[offset+1] << 16)
                   | ((uint32_t)hash[offset+2] << 8)
                   | ((uint32_t)hash[offset+3]);
 
-    // Modulo to get desired number of digits
     uint32_t mod = 1;
     for (int i = 0; i < digits; i++) mod *= 10;
     code %= mod;
 
-    // Zero-pad to desired width
     std::string result = std::to_string(code);
     while ((int)result.size() < digits)
         result.insert(result.begin(), '0');
@@ -246,18 +222,15 @@ int seconds_remaining_now(int period)
 
 bool parse_otpauth_uri(const std::string& uri, std::string& out_secret)
 {
-    // Expected format: otpauth://totp/Label?secret=BASE32&issuer=...
     const std::string prefix = "otpauth://totp/";
     if (uri.size() < prefix.size())
         return false;
 
-    // Case-insensitive prefix check
     std::string lower_uri = uri.substr(0, prefix.size());
     for (auto& ch : lower_uri) ch = (char)std::tolower((unsigned char)ch);
     if (lower_uri != prefix)
         return false;
 
-    // Find "secret=" parameter (case-insensitive)
     std::string lower_full = uri;
     for (auto& ch : lower_full) ch = (char)std::tolower((unsigned char)ch);
 
@@ -265,18 +238,16 @@ bool parse_otpauth_uri(const std::string& uri, std::string& out_secret)
     if (pos == std::string::npos)
         return false;
 
-    pos += 7; // skip "secret="
+    pos += 7;
     size_t end = uri.find('&', pos);
     std::string secret = (end != std::string::npos) ? uri.substr(pos, end - pos) : uri.substr(pos);
 
-    // Trim whitespace
     while (!secret.empty() && std::isspace((unsigned char)secret.back()))
         secret.pop_back();
 
     if (secret.empty())
         return false;
 
-    // Convert to uppercase for consistency
     for (auto& ch : secret) ch = (char)std::toupper((unsigned char)ch);
 
     out_secret = secret;
@@ -323,7 +294,7 @@ bool verify_code(const std::string& secret_b32, const std::string& code, int64_t
 
     for (int i = -window; i <= window; ++i) {
         std::string expected = generate_code(secret, unix_sec + i * 30);
-        // Constant-time comparison to prevent timing side-channel
+        // constant-time compare to prevent timing side-channel
         if (expected.size() == code.size() &&
             sodium_memcmp(expected.data(), code.data(), expected.size()) == 0)
             return true;
@@ -338,7 +309,6 @@ bool verify_code_now(const std::string& secret_b32, const std::string& code)
 
 std::string generate_otpauth_uri(const std::string& secret_b32, const std::string& issuer, const std::string& account)
 {
-    // otpauth://totp/Issuer:Account?secret=BASE32&issuer=Issuer&algorithm=SHA1&digits=6&period=30
     std::string uri = "otpauth://totp/";
     uri += issuer;
     uri += ':';

@@ -1,10 +1,8 @@
-// UI.cpp (core)
-// Shared state definitions, QR textures, theme, selection, shell layout
+// UI.cpp — shared state, QR textures, theme helpers, selection, shell layout
 #include "ui_internal.h"
 
 namespace ui
 {
-    // Tooltip with extra padding
     void SetTooltipPadded(const char* fmt, ...) IM_FMTARGS(1)
     {
         const bool dark = IsDarkTheme();
@@ -26,14 +24,13 @@ namespace ui
 
     ImGuiTextFilter   g_filter;
 
-    // ---- QR code texture for 2FA setup ----
+    // QR texture for 2FA setup
     static ID3D11Texture2D*          s_2fa_qr_tex = nullptr;
     ID3D11ShaderResourceView* s_2fa_qr_srv = nullptr;
     int                       s_2fa_qr_img_size = 0;
 
     void CreateQRTexture(const std::string& text)
     {
-        // Release previous
         if (s_2fa_qr_srv) { s_2fa_qr_srv->Release(); s_2fa_qr_srv = nullptr; }
         if (s_2fa_qr_tex) { s_2fa_qr_tex->Release(); s_2fa_qr_tex = nullptr; }
 
@@ -46,7 +43,6 @@ namespace ui
         int imgSize = (qrSize + 2 * border) * scale;
         s_2fa_qr_img_size = imgSize;
 
-        // Rasterize to RGBA
         std::vector<uint32_t> pixels(imgSize * imgSize);
         for (int y = 0; y < imgSize; y++) {
             for (int x = 0; x < imgSize; x++) {
@@ -58,7 +54,6 @@ namespace ui
             }
         }
 
-        // Create DX11 texture
         D3D11_TEXTURE2D_DESC desc = {};
         desc.Width  = imgSize;
         desc.Height = imgSize;
@@ -91,19 +86,16 @@ namespace ui
         s_2fa_qr_img_size = 0;
     }
 
-    // Helper: ensure URL has protocol for ShellExecute
+    // prepends https:// if no scheme present (needed for ShellExecute)
     std::string EnsureUrlProtocol(const std::string& url)
     {
         if (url.empty()) return url;
-        // Check if already has protocol
         if (url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0 ||
             url.rfind("ftp://", 0) == 0 || url.rfind("file://", 0) == 0)
             return url;
-        // Default to https://
         return "https://" + url;
     }
 
-    // Helper: draw a dashed line between two points
     void AddDashedLine(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col,
                        float thickness, float dash_len, float gap_len)
     {
@@ -129,7 +121,6 @@ namespace ui
         }
     }
 
-    // Helper: draw a dashed rectangle
     void AddDashedRect(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 col,
                        float thickness, float dash_len, float gap_len)
     {
@@ -142,22 +133,17 @@ namespace ui
         AddDashedLine(dl, d, a, col, thickness, dash_len, gap_len); // left
     }
 
-    // AnimatedTab, AnimatedTabBar structs defined in ui_internal.h
-
     std::unordered_set<uint64_t> g_selected;
 
     ShellState* g_shell_ptr = nullptr;
 
-    // ============================================================
-    // THEME-AWARE COLORS
-    // ============================================================
     bool IsDarkTheme()
     {
         return g_shell_ptr ? g_shell_ptr->dark_theme : true;
     }
 
-    // Shadow colors for card elevation (4 rings, outer to inner)
-    ImU32 GetShadowColor(int ring, bool hovered) // ring 0-3, 0=outermost
+    // ring 0-3, outermost first
+    ImU32 GetShadowColor(int ring, bool hovered)
     {
         if (IsDarkTheme())
         {
@@ -175,11 +161,9 @@ namespace ui
         }
     }
 
-    // Change-highlight tint colors
     const ImU32 kChangedRowTint   = colors::ChangedRowTint;
     const ImU32 kNewRowTint       = colors::NewRowTint;
 
-    // Card body background (expanded accordion)
     ImU32 GetCardBodyBg()
     {
         if (g_shell_ptr) {
@@ -192,7 +176,6 @@ namespace ui
             return IM_COL32(246, 246, 246, 255);
     }
 
-    // Badge chip text color
     ImU32 GetBadgeTextColor()
     {
         if (IsDarkTheme())
@@ -201,13 +184,11 @@ namespace ui
             return IM_COL32(255, 255, 255, 240);
     }
 
-    // Favorite heart color
     ImU32 GetFavoriteColor()
     {
-        return IM_COL32(220, 60, 60, 255);  // Same red for both themes
+        return IM_COL32(220, 60, 60, 255);  // same red in both themes
     }
 
-    // Card header background (accordion rows)
     ImVec4 GetCardHeaderBg()
     {
         if (g_shell_ptr)
@@ -218,7 +199,6 @@ namespace ui
             return ImVec4(0.98f, 0.98f, 0.99f, 1.0f);
     }
 
-    // Tile background
     ImVec4 GetTileBg()
     {
         if (IsDarkTheme())
@@ -227,7 +207,6 @@ namespace ui
             return ImVec4(0.98f, 0.98f, 0.99f, 1.0f);
     }
 
-    // Tile hover background
     ImVec4 GetTileHoverBg()
     {
         if (IsDarkTheme())
@@ -236,7 +215,6 @@ namespace ui
             return ImVec4(0.92f, 0.92f, 0.94f, 1.0f);
     }
 
-    // Settings card body background (user-customizable)
     ImVec4 GetCardBg()
     {
         if (g_shell_ptr)
@@ -247,7 +225,6 @@ namespace ui
             return ImVec4(238/255.0f, 238/255.0f, 240/255.0f, 1.0f);
     }
 
-    // Item background (copy rows, etc.)
     ImVec4 GetItemBg()
     {
         if (IsDarkTheme())
@@ -256,7 +233,6 @@ namespace ui
             return ImVec4(0.95f, 0.95f, 0.96f, 1.0f);
     }
 
-    // Item hover background
     ImVec4 GetItemHoverBg()
     {
         if (IsDarkTheme())
@@ -265,7 +241,6 @@ namespace ui
             return ImVec4(0.88f, 0.88f, 0.90f, 1.0f);
     }
 
-    // Checkbox/border gray
     ImVec4 GetBorderGray()
     {
         if (IsDarkTheme())
@@ -274,7 +249,6 @@ namespace ui
             return ImVec4(0.75f, 0.75f, 0.78f, 1.0f);
     }
 
-    // Controls row container background
     ImU32 GetControlsContainerBg()
     {
         if (g_shell_ptr) {
@@ -287,7 +261,6 @@ namespace ui
             return IM_COL32(235, 235, 240, 255);
     }
 
-    // Separator line color
     ImU32 GetSeparatorColor()
     {
         if (IsDarkTheme())
@@ -296,9 +269,6 @@ namespace ui
             return IM_COL32(200, 200, 205, 255);
     }
 
-    // ============================================================
-    // App Style Editor (color customization window)
-    // ============================================================
     void RenderAppStyleEditor(ShellState& s)
     {
         if (!s.style_editor_open) return;
@@ -386,7 +356,6 @@ namespace ui
                 else
                     e.save_light(col->x, col->y, col->z, col->w);
 
-                // Live-update window background
                 if (i == 0)
                     ImGui::GetStyle().Colors[ImGuiCol_WindowBg] = *col;
             }
@@ -485,8 +454,6 @@ namespace ui
 
     const char* GetSearchText()
     {
-        // ImGuiTextFilter::InputBuf is always null-terminated.
-        // Returns "" when empty, which your code already handles.
         return g_filter.InputBuf;
     }
 
@@ -506,7 +473,6 @@ namespace ui
 
         g_shell_ptr = &s;
 
-        // One-time config load
         static bool s_cfg_init = false;
         if (!s_cfg_init)
         {
@@ -543,7 +509,6 @@ namespace ui
             s_cfg_init = true;
         }
 
-        // reset one-frame intents
         s.add_clicked = false;
         s.undo_clicked = false;
         s.save_clicked = false;
@@ -569,7 +534,6 @@ namespace ui
         s.settings_clicked = false;
         s.goto_locked_clicked = false;
 
-        // Set window to fill entire viewport
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);
         ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -594,29 +558,22 @@ namespace ui
 
         g_shell_open = true;
 
-        // ============================================================
-        // TOP BAR: Vault header (dropdown + back/exit)
-        // ============================================================
         if (s.active_screen != Screen::Locked)
         {
-            // Settings shows back button, other screens just exit
             bool show_back = (s.active_screen == Screen::Settings);
             //RenderVaultHeader(s, show_back);
             ImGui::Dummy(ImVec2(0, 8));
         }
 
-        // Note: No longer opening body child here. Caller uses BeginShellHeader/BeginShellScroll.
     }
 
     void BeginShellHeader()
     {
-        // Fixed header area (not scrollable): just regular ImGui content
-        // No child window needed since it doesn't scroll
     }
 
     void EndShellHeader()
     {
-        // Small gap between header and scroll area (skip for edge-to-edge views)
+        // skip gap for edge-to-edge views (three-pane, table)
         bool edgeToEdge = g_shell_ptr &&
             (g_shell_ptr->view_mode == ViewMode::ThreePane ||
              g_shell_ptr->view_mode == ViewMode::Table);
@@ -627,21 +584,20 @@ namespace ui
     void BeginShellScroll()
     {
         float pad = ImGui::GetStyle().WindowPadding.x;
-        float gap = 4.0f; // spacing between scrollbar and border
+        float gap = 4.0f; // gap between content and scrollbar
 
         bool edgeToEdge = g_shell_ptr &&
             (g_shell_ptr->view_mode == ViewMode::ThreePane ||
              g_shell_ptr->view_mode == ViewMode::Table);
 
         float avail_w = ImGui::GetContentRegionAvail().x + pad - gap;
-        float avail_h = 0; // 0 = fill remaining
+        float avail_h = 0;
 
         if (edgeToEdge)
         {
-            // Eat into left padding
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() - pad);
-            avail_w += pad + gap; // also remove right gap
-            avail_h = ImGui::GetContentRegionAvail().y + pad; // eat into bottom padding
+            avail_w += pad + gap;
+            avail_h = ImGui::GetContentRegionAvail().y + pad;
         }
 
         ImGuiWindowFlags scrollFlags = edgeToEdge
@@ -666,9 +622,6 @@ namespace ui
 
     void EndShell()
     {
-        // Note: Caller is responsible for ending scroll child via EndShellScroll().
-
-        // End window
         g_shell_ptr = nullptr;
         g_shell_open = false;
         ImGui::End();

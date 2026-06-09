@@ -74,22 +74,49 @@ void ImGui_FlushDeferredScrollbarGrabs(ImGuiWindow* window)
         }
     }
 
-    // Render deferred scrollbar context menu
-    if (g_scrollbar_ctx.pending && g_scrollbar_ctx.window == window)
+    // Decide where to host the right-click popup. Opening it via BeginPopup
+    // from inside End() of a table's inner scrollable child collides with
+    // ImGui's table-state tracking and crashes with "Missing EndTable()".
+    // Strategy: if the click's TARGET is a table inner (unsafe to host the
+    // popup from), let a later safe host (the parent / root window's flush)
+    // open the popup instead — the popup's MenuItems still act on the
+    // target window's scroll, so the user-visible behavior is unchanged.
+    ImGuiContext& gctx = *GImGui;
+    auto is_table_inner = [&](ImGuiWindow* w) -> bool {
+        if (!w) return false;
+        for (int t = 0; t < gctx.Tables.GetMapSize(); t++)
+            if (ImGuiTable* tbl = gctx.Tables.TryGetMapData(t))
+                if (tbl->InnerWindow == w) return true;
+        return false;
+    };
+    const bool host_unsafe   = is_table_inner(window);
+    const bool target_unsafe = g_scrollbar_ctx.pending && is_table_inner(g_scrollbar_ctx.window);
+
+    if (host_unsafe)
+        return;  // never run popup logic from a table inner's End()
+
+    // Open the popup when one of:
+    //   (a) host IS the target — normal case, user clicked this window's scrollbar.
+    //   (b) target was a table inner — open here as a safe surrogate host.
+    if (g_scrollbar_ctx.pending && (g_scrollbar_ctx.window == window || target_unsafe))
     {
         g_scrollbar_ctx.pending = false;
         ImGui::SetNextWindowPos(g_scrollbar_ctx.mouse_pos);
         ImGui::OpenPopup("##sb_ctx");
     }
+
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
     if (ImGui::BeginPopup("##sb_ctx"))
     {
+        // Always act on the click's target window, not necessarily `window`
+        // (which may be a safe surrogate host).
+        ImGuiWindow* target = g_scrollbar_ctx.window ? g_scrollbar_ctx.window : window;
         if (ImGui::MenuItem("Scroll to Top"))
-            window->Scroll.y = 0;
+            target->Scroll.y = 0;
         if (ImGui::MenuItem("Scroll to Bottom"))
         {
-            float scroll_max_y = ImMax(0.0f, window->ContentSize.y + window->WindowPadding.y * 2.0f - window->InnerRect.GetHeight());
-            window->Scroll.y = scroll_max_y;
+            float scroll_max_y = ImMax(0.0f, target->ContentSize.y + target->WindowPadding.y * 2.0f - target->InnerRect.GetHeight());
+            target->Scroll.y = scroll_max_y;
         }
         ImGui::EndPopup();
     }
@@ -7799,6 +7826,13 @@ static ImGuiID MakeAnimKey(ImGuiID id, ImGuiID salt)
     return id ^ salt;
 }
 
+// Project-specific extension flag for Selectable2 (caller picks alignment).
+// Bit 30 is outside the public ImGuiSelectableFlags_ range, so it won't
+// collide with stock flags now or in foreseeable upstream additions.
+// `extern const` required — file-scope `const` defaults to internal linkage
+// in C++, which would leave the symbol invisible to other translation units.
+extern const ImGuiSelectableFlags PDSelectableFlags_LeftAlignText = (ImGuiSelectableFlags)(1 << 30);
+
 bool ImGui::Selectable2(const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size_arg)
 {
     ImGuiWindow* window = GetCurrentWindow();
@@ -7976,10 +8010,21 @@ bool ImGui::Selectable2(const char* label, bool selected, ImGuiSelectableFlags f
         st->SetFloat(underline_key, underline_t);
         st->SetFloat(dot_key, dot_t);
 
-        // ---- compute centered text position ourselves (so underline can sit under it) ----
-        const float cx = (bb.Min.x + bb.Max.x) * 0.5f;
+        // ---- compute text position (centered by default; left-aligned with
+        // padding for the leading dot when PDSelectableFlags_LeftAlignText is set) ----
+        const bool left_align = (flags & PDSelectableFlags_LeftAlignText) != 0;
         ImVec2 text_pos;
-        text_pos.x = IM_ROUND(cx - label_size.x * 0.5f);
+        if (left_align)
+        {
+            // Leave room for the dot (dot_pad_l + dot_r_max + small gap).
+            const float left_pad = 24.0f;
+            text_pos.x = IM_ROUND(bb.Min.x + left_pad);
+        }
+        else
+        {
+            const float cx = (bb.Min.x + bb.Max.x) * 0.5f;
+            text_pos.x = IM_ROUND(cx - label_size.x * 0.5f);
+        }
         text_pos.y = IM_ROUND(bb.Min.y + (bb.GetHeight() - label_size.y) * 0.5f);
 
         // label extents (underline width == label width)
@@ -8028,8 +8073,18 @@ bool ImGui::Selectable2(const char* label, bool selected, ImGuiSelectableFlags f
             }
         }
 
-        // ---- centered label render (matches underline position) ----
-        RenderTextClipped(bb.Min, bb.Max, label, NULL, &label_size, ImVec2(0.5f, 0.5f), &bb);
+        // ---- label render (matches underline position) ----
+        if (left_align)
+        {
+            // Render starting at text_pos.x, clipped within bb so an overlong
+            // filename doesn't bleed past the row.
+            ImVec2 left_min(text_pos.x, bb.Min.y);
+            RenderTextClipped(left_min, bb.Max, label, NULL, &label_size, ImVec2(0.0f, 0.5f), &bb);
+        }
+        else
+        {
+            RenderTextClipped(bb.Min, bb.Max, label, NULL, &label_size, ImVec2(0.5f, 0.5f), &bb);
+        }
 
     }
 

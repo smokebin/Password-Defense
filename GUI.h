@@ -35,50 +35,43 @@ namespace render
 
 	static UINT                    g_ResizeWidth = 0, g_ResizeHeight = 0;
 
-	// HANDLES
 	extern WNDCLASSEXW wc;
 	extern HWND		  hwnd;
 
-	// FUNCTIONS DECLARATIONS
 	void BeginGUIDraw();
 	void EndGUIDraw();
 	void GUIShutDown();
 	void GUIInit();
 
-	// UI STYLES
 	float BeginCenteredColumn(const char* id, float maxW);
 	void EndCenteredColumn();
 
-	// Soft container: draws lifted surface with shadow behind content
+	// lifted surface with layered shadow
 	void BeginSoftContainer(float padding = 24.0f, float rounding = 12.0f);
 	void EndSoftContainer();
 
-	// APPLICATION
 	void SetupProgram();
 	void DisplayProgram();
 
-	// SYSTEM TRAY
 	void AddTrayIcon();
 	void RemoveTrayIcon();
 	void HideToTray();
 	void RestoreFromTray();
-	bool ConsumeTrayLock();   // returns true once when Lock clicked
-	bool ConsumeTrayQuit();   // returns true once when Quit clicked
+	bool ConsumeTrayLock();   // true once when Lock clicked
+	bool ConsumeTrayQuit();   // true once when Quit clicked
 	bool IsWindowVisible();
-	void SetMinimizeToTray(bool enabled); // sync from ShellState each frame
+	void SetMinimizeToTray(bool enabled); // called each frame from application.cpp
 
-	// THEME
 	void ApplyDarkTheme();
 	void ApplyLightTheme();
 	void ApplyTheme(bool dark);
 
-	// FONTS
-	extern ImFont* Font15;
+	extern ImFont* Font15;       // alias for FontRegular
 	extern ImFont* FontIcons;
-	extern ImFont* FontSmall;   // 12px - captions, subtitles
-	extern ImFont* FontRegular; // 15px - body text, labels
-	extern ImFont* FontBold;    // 15px - bold labels
-	extern ImFont* FontLarge;   // 18px - titles, headers
+	extern ImFont* FontSmall;   // 13px
+	extern ImFont* FontRegular; // 15px
+	extern ImFont* FontBold;    // 20px segoe bold
+	extern ImFont* FontLarge;   // 17px
 
 }
 
