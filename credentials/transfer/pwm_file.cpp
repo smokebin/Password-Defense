@@ -1,5 +1,4 @@
-// pwm_file.cpp
-// Encrypted .pwm export/import implementation
+// pwm_file.cpp — encrypted .pwm export/import
 //
 // Binary layout:
 //   [0..3]   magic        "PWM\0"
@@ -21,7 +20,6 @@
 
 namespace pwm_file {
 
-// ---- constants ----
 static const uint8_t  MAGIC[4] = { 'P', 'W', 'M', '\0' };
 static constexpr uint16_t FORMAT_VERSION = 1;
 static constexpr size_t HEADER_SIZE = 50;  // magic(4) + ver(2) + salt(16) + count(4) + nonce(24)
@@ -29,8 +27,6 @@ static constexpr size_t NONCE_SIZE = 24;   // crypto_aead_xchacha20poly1305_ietf
 static constexpr size_t TAG_SIZE   = 16;   // crypto_aead_xchacha20poly1305_ietf_ABYTES
 static constexpr size_t AAD_SIZE   = 6;    // magic(4) + version(2)
 static constexpr uint32_t MAX_CRED_COUNT = 100000;
-
-// ---- serialization (self-contained, not reusing undo serialize) ----
 
 static nlohmann::json cred_to_json(const Credential& c)
 {
@@ -118,8 +114,6 @@ static Credential json_to_cred(const nlohmann::json& j)
     return c;
 }
 
-// ---- helpers ----
-
 static void write_u16_le(uint8_t* dst, uint16_t v)
 {
     dst[0] = (uint8_t)(v & 0xFF);
@@ -147,8 +141,6 @@ static uint32_t read_u32_le(const uint8_t* src)
         | ((uint32_t)src[3] << 24);
 }
 
-// ---- public API ----
-
 ExportResult export_pwm(
     const std::vector<Credential>& creds,
     const std::string& export_password,
@@ -156,50 +148,45 @@ ExportResult export_pwm(
 {
     ExportResult res;
 
-    // 1. Serialize credentials to JSON
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& c : creds)
         arr.push_back(cred_to_json(c));
 
     std::string plaintext = arr.dump();
 
-    // 2. Generate salt & derive key
-    auto salt = enc::generate_salt();  // 16 bytes
+    auto salt = enc::generate_salt();
     auto key  = enc::derive_master_key(export_password, salt);
     if (key.empty()) {
         res.error = "Key derivation failed";
         return res;
     }
 
-    // 3. Build header (first 50 bytes)
     std::vector<unsigned char> out(HEADER_SIZE);
-    std::memcpy(out.data(), MAGIC, 4);                          // [0..3]  magic
-    write_u16_le(out.data() + 4, FORMAT_VERSION);               // [4..5]  version
-    std::memcpy(out.data() + 6, salt.data(), enc::SALT_SIZE);   // [6..21] salt
-    write_u32_le(out.data() + 22, (uint32_t)creds.size());      // [22..25] cred_count
+    std::memcpy(out.data(), MAGIC, 4);                          // [0..3]
+    write_u16_le(out.data() + 4, FORMAT_VERSION);               // [4..5]
+    std::memcpy(out.data() + 6, salt.data(), enc::SALT_SIZE);   // [6..21]
+    write_u32_le(out.data() + 22, (uint32_t)creds.size());      // [22..25]
 
-    // 4. Generate nonce
     uint8_t nonce[NONCE_SIZE];
     randombytes_buf(nonce, NONCE_SIZE);
-    std::memcpy(out.data() + 26, nonce, NONCE_SIZE);            // [26..49] nonce
+    std::memcpy(out.data() + 26, nonce, NONCE_SIZE);            // [26..49]
 
-    // 5. Encrypt: XChaCha20-Poly1305 with AAD = bytes[0..5]
+    // XChaCha20-Poly1305, AAD = header[0..5]
     size_t ct_len = plaintext.size() + TAG_SIZE;
     out.resize(HEADER_SIZE + ct_len);
 
     unsigned long long actual_ct_len = 0;
     int rc = crypto_aead_xchacha20poly1305_ietf_encrypt(
-        out.data() + HEADER_SIZE,       // ciphertext destination
+        out.data() + HEADER_SIZE,
         &actual_ct_len,
         reinterpret_cast<const unsigned char*>(plaintext.data()),
         plaintext.size(),
-        out.data(),                      // AAD = header[0..5]
+        out.data(),  // AAD = header[0..5]
         AAD_SIZE,
-        nullptr,                         // nsec (unused)
+        nullptr,     // nsec (unused by xchacha20poly1305)
         nonce,
         key.data());
 
-    // Secure-zero sensitive data
     enc::secure_zero(key);
     sodium_memzero(plaintext.data(), plaintext.size());
 
@@ -210,7 +197,6 @@ ExportResult export_pwm(
 
     out.resize(HEADER_SIZE + (size_t)actual_ct_len);
 
-    // 6. Write to file
     if (!helpers::bytes_to_file(file_path, out)) {
         res.error = "Could not write file";
         return res;
@@ -227,27 +213,23 @@ ImportResult import_pwm(
 {
     ImportResult res;
 
-    // 1. Read file
     auto data = helpers::file_to_vec(file_path);
     if (data.size() < HEADER_SIZE + TAG_SIZE) {
         res.error = "Not a valid .pwm file";
         return res;
     }
 
-    // 2. Validate magic
     if (std::memcmp(data.data(), MAGIC, 4) != 0) {
         res.error = "Not a valid .pwm file";
         return res;
     }
 
-    // 3. Check version
     uint16_t version = read_u16_le(data.data() + 4);
     if (version > FORMAT_VERSION) {
         res.error = "Unsupported format version";
         return res;
     }
 
-    // 4. Extract fields
     std::vector<uint8_t> salt(data.data() + 6, data.data() + 6 + enc::SALT_SIZE);
     uint32_t cred_count = read_u32_le(data.data() + 22);
     const uint8_t* nonce = data.data() + 26;
@@ -259,24 +241,22 @@ ImportResult import_pwm(
         return res;
     }
 
-    // 5. Derive key
     auto key = enc::derive_master_key(import_password, salt);
     if (key.empty()) {
         res.error = "Key derivation failed";
         return res;
     }
 
-    // 6. Decrypt
     std::vector<unsigned char> plaintext(ct_len - TAG_SIZE);
     unsigned long long pt_len = 0;
 
     int rc = crypto_aead_xchacha20poly1305_ietf_decrypt(
         plaintext.data(),
         &pt_len,
-        nullptr,                         // nsec (unused)
+        nullptr,        // nsec (unused)
         ciphertext,
         ct_len,
-        data.data(),                     // AAD = header[0..5]
+        data.data(),    // AAD = header[0..5]
         AAD_SIZE,
         nonce,
         key.data());
@@ -288,7 +268,6 @@ ImportResult import_pwm(
         return res;
     }
 
-    // 7. Parse JSON
     std::string json_str(reinterpret_cast<const char*>(plaintext.data()), (size_t)pt_len);
     sodium_memzero(plaintext.data(), plaintext.size());
 
@@ -305,7 +284,6 @@ ImportResult import_pwm(
         for (const auto& j : arr)
             res.creds.push_back(json_to_cred(j));
 
-        // Sanity check
         if (cred_count != 0 && res.creds.size() != (size_t)cred_count) {
             res.error = "Corrupted export data";
             res.creds.clear();

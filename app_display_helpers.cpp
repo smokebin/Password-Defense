@@ -1,5 +1,4 @@
-// app_display_helpers.cpp
-// Pure display/search utility functions extracted from application.cpp
+// app_display_helpers.cpp — display/search helpers split out of application.cpp
 
 #include "app_internal.h"
 #include "UI.h"
@@ -40,7 +39,6 @@ uint32_t iso_to_monthkey_yyyymm(const std::string& iso)
     return (uint32_t)(y * 100 + m);
 }
 
-// Convert Unix ms to YYYYMM month key
 uint32_t unix_ms_to_monthkey(int64_t ms)
 {
     if (ms == 0) return 0;
@@ -80,8 +78,7 @@ bool str_contains_ci(const std::string& hay, const char* needle)
     if (!needle || !needle[0]) return true;
     if (hay.empty()) return false;
 
-    // ImStristr is in imgui_internal.h (included by UI.h)
-    return ImStristr(hay.c_str(), nullptr, needle, nullptr) != nullptr;
+    return ImStristr(hay.c_str(), nullptr, needle, nullptr) != nullptr; // ImStristr from imgui_internal.h via UI.h
 }
 
 bool matches_search(const Credential& c, const char* needle, int search_filter)
@@ -152,11 +149,10 @@ std::vector<ui::AccordionItem> build_accordion_items(
     ui::OrderDir order_dir,
     ui::GroupMode group_mode)
 {
-    // 1) filter pointers
     std::vector<const Credential*> list;
     list.reserve(creds.size());
 
-    // Split selected groups into type filters (@-prefixed) and group filters
+    // @-prefixed entries in `groups` are type filters, not group name filters
     std::set<CredType> type_filters;
     std::set<std::string> group_filters;
     for (const auto& g : groups) {
@@ -167,7 +163,6 @@ std::vector<ui::AccordionItem> build_accordion_items(
         else if (g != "---")           group_filters.insert(g);
     }
 
-    // Determine active pill tab filter
     std::string active_pill;
     if (sort_mode == 0) active_pill = pill_tab_0;
     else if (sort_mode == 1) active_pill = pill_tab_1;
@@ -177,7 +172,7 @@ std::vector<ui::AccordionItem> build_accordion_items(
         if (!type_filters.empty() && type_filters.find(c.type) == type_filters.end()) continue;
         if (!group_filters.empty() && group_filters.find(c.group) == group_filters.end()) continue;
 
-        // Tag filtering (OR logic: credential must have ANY selected tag)
+        // tag filter is OR: cred needs at least one matching tag
         if (!tag_filters.empty()) {
             bool has_any = false;
             for (const auto& t : c.tags)
@@ -185,7 +180,6 @@ std::vector<ui::AccordionItem> build_accordion_items(
             if (!has_any) continue;
         }
 
-        // Pill tab filtering
         if (!active_pill.empty())
         {
             if (active_pill == "Pinned") { if (!c.is_pinned) continue; }
@@ -198,7 +192,6 @@ std::vector<ui::AccordionItem> build_accordion_items(
         list.push_back(&c);
     }
 
-    // Use Unix ms timestamps directly for sorting (already numeric)
     auto created_key = [](const Credential* c) -> uint64_t {
         return c ? static_cast<uint64_t>(c->created_at_ms) : 0;
         };
@@ -249,7 +242,6 @@ std::vector<ui::AccordionItem> build_accordion_items(
             std::sort(bucket.begin(), bucket.end(), compare_items);
         };
 
-    // 2) build UI items (+ optional headers)
     std::vector<ui::AccordionItem> out;
     out.reserve(list.size() + 32);
 
@@ -308,7 +300,6 @@ std::vector<ui::AccordionItem> build_accordion_items(
                 it.password_history.push_back({h.password, h.changed_at_ms});
             }
 
-            // Compute change flags vs saved snapshot
             const Credential* saved_ptr = nullptr;
             if (!c->uuid.empty()) {
                 auto sit = saved_snapshot.find(c->uuid);
@@ -361,7 +352,6 @@ std::vector<ui::AccordionItem> build_accordion_items(
     }
     else if (group_mode == ui::GroupMode::Group)
     {
-        // Pinned & favorites float to top in their own sections
         std::vector<const Credential*> pinned;
         std::vector<const Credential*> favorites;
         std::unordered_map<std::string, std::vector<const Credential*>> buckets;

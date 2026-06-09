@@ -1,24 +1,12 @@
 {
-     "db_path": "A:\\prjcts\\pwmngr\\pw-windows\\x64\\Release\\vault-0.db",
-     "detailed_header_columns": {
-          "date": true,
-          "email": true,
-          "index": true,
-          "pin_fav": true,
-          "sub_card": true,
-          "sub_identity": true,
-          "sub_note": true,
-          "sub_password": true,
-          "title": true,
-          "username": true
-     },
-     "group_mode": 0,
-     "online_favicons": true,
-     "reprompt_reveal_notes": false,
-     "theme": 0,
-     "three_pane_list_collapsed": false,
-     "three_pane_sidebar_auto_collapse": false,
-     "three_pane_sidebar_collapsed": false,
-     "view_mode": 4,
+     "db_path": "A:\\prjcts\\pwmngr\\pw-windows\\x64\\Release\\work.db",
+     "recent_vaults": [
+          "A:\\prjcts\\pwmngr\\pw-windows\\x64\\Release\\work.db",
+          "E:\\USB BACKUP\\2024.db",
+          "C:\\Users\\demo\\OneDrive\\Shared\\family.db"
+     ],
+     "three_pane_list_collapsed": true,
+     "three_pane_sidebar_collapsed": true,
+     "view_mode": 3,
      "wnd_border": "1.000000,1.000000,1.000000"
 }

@@ -1,6 +1,7 @@
 // ui_views_table.cpp
 // Table view: spreadsheet-style credential list
 #include "ui_internal.h"
+#include "tools/totp.h"
 
 namespace ui
 {
@@ -13,12 +14,10 @@ namespace ui
         AccordionListResult out{};
         auto& s = *g_shell_ptr;
 
-        // Build flat index of non-header items
         static std::vector<int> sortedIdx;
         static int              lastItemCount = -1;
         bool needsSort = false;
 
-        // Rebuild index when items change (include headers for grouped display)
         {
             int totalCount = (int)items.size();
 
@@ -44,13 +43,12 @@ namespace ui
             return out;
         }
 
-        // Column IDs
         enum TableColID {
             Col_Checkbox = 0, Col_Index, Col_Type, Col_Title, Col_Username,
-            Col_Email, Col_Website, Col_Group, Col_Date, Col_PinFav
+            Col_Email, Col_Website, Col_Group, Col_Date, Col_PinFav, Col_TOTP
         };
 
-        // Detect single-type filter for dynamic columns
+        // cols 3-6 swap their headers/data based on which single type is filtered
         enum TableTypeFilter { TF_Mixed = 0, TF_Passwords, TF_Cards, TF_Identity, TF_Notes };
         TableTypeFilter typeFilter = TF_Mixed;
         {
@@ -68,7 +66,6 @@ namespace ui
             }
         }
 
-        // Dynamic column headers for cols 3-6
         const char* col3Hdr = "Username";
         const char* col4Hdr = "Email";
         const char* col5Hdr = "Website";
@@ -98,14 +95,13 @@ namespace ui
         ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, dark ? IM_COL32(255, 255, 255, 6) : IM_COL32(0, 0, 0, 8));
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 8));  // right-click popup padding
-        if (!ImGui::BeginTable("##cred_table", 9, tableFlags, ImVec2(avail_w, avail_h)))
+        if (!ImGui::BeginTable("##cred_table", 10, tableFlags, ImVec2(avail_w, avail_h)))
         {
             ImGui::PopStyleVar();  // WindowPadding
             ImGui::PopStyleColor(4);
             return out;
         }
 
-        // Column setup (cols 3-6 are dynamic based on type filter)
         ImGui::TableSetupColumn("###cb", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoReorder | ImGuiTableColumnFlags_NoHeaderLabel, 28.0f, Col_Checkbox);
         ImGui::TableSetupColumn("Icon",     ImGuiTableColumnFlags_WidthFixed, 30.0f, Col_Type);
         ImGui::TableSetupColumn("Title",    ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 3.0f, Col_Title);
@@ -115,9 +111,11 @@ namespace ui
         ImGui::TableSetupColumn(col6Hdr, ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultHide | (typeFilter == TF_Notes ? ImGuiTableColumnFlags_Disabled : 0), 1.5f, Col_Group);
         ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, 90.0f, Col_Date);
         ImGui::TableSetupColumn("#",   ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize, 36.0f, Col_Index);
+        // Live TOTP code; off by default — toggle via the column-toggle menu
+        // in the header. Click the cell to copy the current code.
+        ImGui::TableSetupColumn("TOTP", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_DefaultHide, 110.0f, Col_TOTP);
         ImGui::TableSetupScrollFreeze(0, 1);
 
-        // Style the built-in table header context menu before TableHeadersRow triggers it
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,  8.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6, 8));
@@ -151,8 +149,7 @@ namespace ui
         {
             if (sortSpecs->SpecsDirty || needsSort)
             {
-                // Always preserve original order with group headers.
-                // Sort data items within each group.
+                // sort data items within each group, preserving header positions
                 sortedIdx.clear();
                 for (int i = 0; i < (int)items.size(); i++)
                     sortedIdx.push_back(i);
@@ -162,7 +159,6 @@ namespace ui
                     const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[0];
                     const bool asc = (spec.SortDirection == ImGuiSortDirection_Ascending);
 
-                    // Find group boundaries and sort within each group
                     int groupStart = 0;
                     for (int i = 0; i <= (int)sortedIdx.size(); i++)
                     {
@@ -171,7 +167,6 @@ namespace ui
 
                         if (atEnd || isHdr)
                         {
-                            // Sort the data range [groupStart, i)
                             if (i > groupStart)
                             {
                                 std::sort(sortedIdx.begin() + groupStart, sortedIdx.begin() + i,
@@ -294,18 +289,15 @@ namespace ui
 
                 ImGui::TableNextRow();
 
-                // Capture row Y for hover detection
                 ImGui::TableSetColumnIndex(0);
                 float rowStartY = ImGui::GetCursorScreenPos().y;
 
-                // Row background tints (changed/new only — security uses icons instead)
                 if (c.is_changed)
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
                         (c.changed_fields & FCF_IsNew) ? kNewRowTint : kChangedRowTint);
 
                 ImGui::PushID((int)rowKey);
 
-                // Col 0: Checkbox
                 {
                     ImVec2 pos = ImGui::GetCursorScreenPos();
                     float offsetY = (ImGui::GetTextLineHeightWithSpacing() - 15.0f) * 0.5f;
@@ -315,7 +307,6 @@ namespace ui
                         ToggleSelected(rowKey);
                 }
 
-                // Col 1: Favicon / type icon (rounded, no background)
                 if (ImGui::TableSetColumnIndex(1))
                 {
                     auto srv = favicon::Get(c.website);
@@ -338,7 +329,6 @@ namespace ui
                         SetTooltipPadded("%s", CredTypeLabel(c.type));
                 }
 
-                // Col 2: Title + Pin/Fav icons (line 1) + Security icons (line 2, right-aligned)
                 if (ImGui::TableSetColumnIndex(2))
                 {
                     float colW = ImGui::GetContentRegionAvail().x;
@@ -347,12 +337,10 @@ namespace ui
                     const float icoGap = 2.0f;
                     ImDrawList* tdl = ImGui::GetWindowDrawList();
 
-                    // Measure pin/fav width
                     float pinFavW = 0.0f;
                     if (c.is_pinned)   pinFavW += ImGui::CalcTextSize(ICON_MDI_PIN).x + icoGap;
                     if (c.is_favorite) pinFavW += ImGui::CalcTextSize(ICON_MDI_HEART).x + icoGap;
 
-                    // Measure security icons width
                     bool isWeak    = s.sec_highlight_weak    && s.sec_weak_ids.count(c.id);
                     bool isReused  = s.sec_highlight_reused  && s.sec_reused_ids.count(c.id);
                     bool isExposed = s.sec_highlight_exposed && s.sec_exposed_ids.count(c.id);
@@ -363,14 +351,12 @@ namespace ui
                     if (isExposed) secW += ImGui::CalcTextSize(ICON_MDI_EARTH).x + icoGap;
                     if (isAging)   secW += ImGui::CalcTextSize(ICON_MDI_CLOCK_ALERT).x + icoGap;
 
-                    // Title clips to the wider icon row
                     float maxIconsW = ImMax(pinFavW, secW);
                     float titleW = maxIconsW > 0 ? colW - maxIconsW - 4.0f : colW;
                     ImGui::PushFont(render::FontBold);
                     TextEllipsisClipped(c.title.c_str(), titleW);
                     ImGui::PopFont();
 
-                    // Pin/Fav icons — right-aligned, top
                     if (pinFavW > 0)
                     {
                         float iconX = cellPos.x + colW - pinFavW;
@@ -384,7 +370,6 @@ namespace ui
                         }
                     }
 
-                    // Security icons — right-aligned, below pin/fav
                     if (secW > 0)
                     {
                         float iconX = cellPos.x + colW - secW;
@@ -407,7 +392,6 @@ namespace ui
                     }
                 }
 
-                // Cols 3-6: type-aware content
                 if (typeFilter == TF_Cards)
                 {
                     if (ImGui::TableSetColumnIndex(3))
@@ -513,10 +497,30 @@ namespace ui
                     ImGui::TextDisabled("%d", credIndex[row]);
                 }
 
+                // Col 9: Live TOTP code (hidden by default). Click to copy.
+                if (ImGui::TableSetColumnIndex(9))
+                {
+                    if (!c.totp_secret.empty()) {
+                        auto totp_bytes = totp::base32_decode(c.totp_secret);
+                        if (totp_bytes.size() >= 10) {
+                            std::string code = totp::generate_code_now(totp_bytes);
+                            int secs = totp::seconds_remaining_now();
+                            std::string disp = (code.size() == 6 ? code.substr(0,3) + " " + code.substr(3) : code);
+                            ImVec4 col = (secs > 5) ? colors::Green : colors::Red;
+                            ImGui::TextColored(col, "%s  %ds", disp.c_str(), secs);
+                            if (ImGui::IsItemClicked(0)) {
+                                ImGui::SetClipboardText(code.c_str());
+                                ShowToast("TOTP copied", ToastType::Success);
+                            }
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                        }
+                    }
+                }
+
                 ImGui::PopID();
 
-                // Row hover + interactions (after all columns rendered)
-                // Use table cell bg rect for accurate row bounds
+                // cell bg rect gives accurate row bounds for hover detection
                 ImRect cellRect = ImGui::TableGetCellBgRect(ImGui::GetCurrentTable(), 0);
                 float rowStartYActual = cellRect.Min.y;
                 float rowEndY = cellRect.Max.y;
@@ -527,13 +531,11 @@ namespace ui
                                    mp.x >= rowMinX && mp.x < rowMaxX &&
                                    ImGui::IsWindowHovered(ImGuiHoveredFlags_None));
 
-                // Custom row rendering: shine/shadow depth
                 {
                     ImDrawList* rdl = ImGui::GetWindowDrawList();
 
                     if (selected)
                     {
-                        // Selected: strong fill + top shine + bottom shadow
                         ImU32 fillCol = dark ? IM_COL32(255, 255, 255, 25) : IM_COL32(0, 0, 0, 15);
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, fillCol);
                         rdl->AddLine(ImVec2(rowMinX, rowStartY), ImVec2(rowMaxX, rowStartY),
@@ -543,7 +545,6 @@ namespace ui
                     }
                     else if (rowHovered)
                     {
-                        // Hovered: subtle fill + shine + shadow
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, hoverTint);
                         rdl->AddLine(ImVec2(rowMinX, rowStartY), ImVec2(rowMaxX, rowStartY),
                             dark ? IM_COL32(255, 255, 255, 14) : IM_COL32(255, 255, 255, 220), 1.0f);
@@ -552,7 +553,6 @@ namespace ui
                     }
                     else
                     {
-                        // Normal: top highlight + bottom shadow for carved look
                         rdl->AddLine(ImVec2(rowMinX, rowStartY), ImVec2(rowMaxX, rowStartY),
                             dark ? IM_COL32(255, 255, 255, 8) : IM_COL32(255, 255, 255, 160), 1.0f);
                         rdl->AddLine(ImVec2(rowMinX, rowEndY - 1.0f), ImVec2(rowMaxX, rowEndY - 1.0f),
@@ -564,7 +564,6 @@ namespace ui
                 if (rowHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     out.edit_open_id = c.id;
 
-                // Left-click row to select and open popup
                 if (rowHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                     !ImGui::IsPopupOpen("##tbl_col_hdr_popup"))
                 {
@@ -575,7 +574,6 @@ namespace ui
             }
         }
 
-        // Deferred right-click popup (outside clipper, inside table)
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding,  8.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 10));
@@ -583,7 +581,6 @@ namespace ui
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(8, 6));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IsDarkTheme() ? theme::PopupBg.dark : theme::PopupBg.light);
         ImGui::PushStyleColor(ImGuiCol_Border,  IsDarkTheme() ? theme::PopupBorder.dark : theme::PopupBorder.light);
-        // Find credential by stored ID
         const AccordionItem* popup_item = nullptr;
         if (s_table_popup_id >= 0)
         {
@@ -603,7 +600,6 @@ namespace ui
                 ImGui::Dummy(ImVec2(secW, 0));
             }
 
-            // ============================================================ TAB 0: Details ============
             if (s_tbl_popup_tab == 0)
             {
                 ImGui::PushFont(render::FontBold);
@@ -611,7 +607,6 @@ namespace ui
                 ImGui::PopFont();
                 ImGui::Dummy(ImVec2(0, 4));
 
-                // Quick action icon bar
                 {
                     const float ibSz = 28.0f;
                     const float ibGap = 4.0f;
@@ -640,7 +635,6 @@ namespace ui
                 ImGui::Dummy(ImVec2(0, 2));
                 ImGui::Separator();
 
-                // Copy actions
                 static std::unordered_map<uint64_t, float> s_copied_timers;
                 const float copiedDuration = 1.5f;
                 float now = (float)ImGui::GetTime();
@@ -667,6 +661,39 @@ namespace ui
                 hasPw = (pw && pw[0] != '\0');
                 if (BarMenuItem(showCopied("pw") ? ICON_MDI_CHECK "   Copied!##pw" : ICON_MDI_KEY "   Copy Password", false, hasPw))
                 { ClipboardCopyPassword(pw); markCopied("pw"); }
+
+                bool hasTotp = !c.totp_secret.empty();
+                std::string totp_code;
+                bool totpValid = false;
+                if (hasTotp) {
+                    auto totp_bytes = totp::base32_decode(c.totp_secret);
+                    if (totp_bytes.size() >= 10) {
+                        totp_code = totp::generate_code_now(totp_bytes);
+                        totpValid = true;
+                    }
+                }
+
+                std::string totp_label;
+                if (showCopied("totp")) {
+                    totp_label = ICON_MDI_CHECK "   Copied!##totp";
+                } else if (totpValid) {
+                    // Show the live code inline. Click copies it.
+                    std::string disp = (totp_code.size() == 6)
+                        ? (totp_code.substr(0, 3) + " " + totp_code.substr(3))
+                        : totp_code;
+                    int secs = totp::seconds_remaining_now();
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), ICON_MDI_CLOCK "   %s   (%ds)##totp", disp.c_str(), secs);
+                    totp_label = buf;
+                } else {
+                    totp_label = ICON_MDI_CLOCK "   Copy TOTP##totp";
+                }
+
+                if (BarMenuItem(totp_label.c_str(), false, hasTotp && totpValid))
+                {
+                    ImGui::SetClipboardText(totp_code.c_str());
+                    markCopied("totp");
+                }
 
                 if (c.type == CredType::CreditCard) {
                     bool hasCard = !c.card_number.empty();
@@ -697,7 +724,6 @@ namespace ui
                     ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(winX, itemMin.y), ImVec2(winX + winW, itemMax.y), colors::DeleteTint, 4.0f);
                 }
             }
-            // ============================================================ TAB 1: Notes ============
             else if (s_tbl_popup_tab == 1)
             {
                 const uint64_t noteRowKey = MakeRowKey(activeVaultKey, c.id);
@@ -746,7 +772,6 @@ namespace ui
                     ImGui::PopStyleColor(2);
                 }
             }
-            // ============================================================ TAB 2: Security ============
             else if (s_tbl_popup_tab == 2 && hasSecurityTab)
             {
                 const char* pw = get_password_fn ? get_password_fn(c.id) : "";
@@ -838,7 +863,6 @@ namespace ui
         }
         else
         {
-            // Popup closed — reset
             s_table_popup_id = -1;
         }
         ImGui::PopStyleColor(2);

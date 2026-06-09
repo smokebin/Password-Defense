@@ -26,16 +26,13 @@
 
 namespace favicon {
 
-// ---- Internal state ----
-static std::unordered_map<std::string, ID3D11ShaderResourceView*> s_cache;   // domain -> SRV (nullptr = failed)
+static std::unordered_map<std::string, ID3D11ShaderResourceView*> s_cache;   // domain -> SRV (nullptr = failed/missing)
 static std::unordered_set<std::string>                            s_pending; // domains being fetched
 static std::mutex                                                 s_mutex;
 static std::vector<std::pair<std::string, std::vector<uint8_t>>>  s_fetched; // completed fetches for main thread
 static std::string                                                s_cache_dir;
 static bool                                                       s_initialized = false;
 static std::atomic<bool>                                          s_network_enabled{ false }; // offline-first
-
-// ---- Helpers ----
 
 static ID3D11ShaderResourceView* CreateTextureFromMemory(const unsigned char* data, int len)
 {
@@ -111,8 +108,6 @@ static void WriteFile(const std::string& path, const std::vector<uint8_t>& data)
         f.write(reinterpret_cast<const char*>(data.data()), data.size());
 }
 
-// ---- Favicon fetch ----
-
 static std::vector<uint8_t> FetchFavicon(const std::string& domain)
 {
     std::vector<uint8_t> result;
@@ -127,7 +122,6 @@ static std::vector<uint8_t> FetchFavicon(const std::string& domain)
         L"www.google.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!hConnect) { WinHttpCloseHandle(hSession); return result; }
 
-    // Build path: /s2/favicons?domain=xxx&sz=32
     std::wstring path = L"/s2/favicons?domain=";
     for (char c : domain) path += (wchar_t)c;
     path += L"&sz=32";
@@ -142,7 +136,6 @@ static std::vector<uint8_t> FetchFavicon(const std::string& domain)
         return result;
     }
 
-    // Allow redirects
     DWORD opt = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
     WinHttpSetOption(hRequest, WINHTTP_OPTION_REDIRECT_POLICY, &opt, sizeof(opt));
 
@@ -156,7 +149,6 @@ static std::vector<uint8_t> FetchFavicon(const std::string& domain)
         return result;
     }
 
-    // Check status
     DWORD statusCode = 0;
     DWORD statusSize = sizeof(statusCode);
     WinHttpQueryHeaders(hRequest,
@@ -194,15 +186,11 @@ static std::vector<uint8_t> FetchFavicon(const std::string& domain)
             result.assign(body.begin(), body.end());
         }
     }
-    catch (...) {
-        // Favicon fetch is best-effort
-    }
+    catch (...) {} // best-effort
 #endif
 
     return result;
 }
-
-// ---- Drain fetched results on main thread ----
 
 static void DrainFetched()
 {
@@ -223,31 +211,23 @@ static void DrainFetched()
     s_fetched.clear();
 }
 
-// ---- Public API ----
-
 std::string ExtractDomain(const std::string& url)
 {
     std::string s = url;
 
-    // Strip protocol
     auto pos = s.find("://");
     if (pos != std::string::npos) s = s.substr(pos + 3);
 
-    // Strip www.
     if (s.substr(0, 4) == "www.") s = s.substr(4);
 
-    // Strip path
     pos = s.find('/');
     if (pos != std::string::npos) s = s.substr(0, pos);
 
-    // Strip port
     pos = s.find(':');
     if (pos != std::string::npos) s = s.substr(0, pos);
 
-    // Lowercase
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
 
-    // Trim whitespace
     while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
 
@@ -305,7 +285,6 @@ CacheStats GetCacheStats()
 
 void ClearCache()
 {
-    // Delete on-disk .png cache files
     if (!s_cache_dir.empty())
     {
         std::error_code ec;
@@ -317,7 +296,7 @@ void ClearCache()
         }
     }
 
-    // Drop in-memory state, then reload bundled icons (those have no disk file)
+    // reload bundled icons (they have no disk file)
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         s_pending.clear();
@@ -331,7 +310,6 @@ void ClearCache()
 
 void Shutdown()
 {
-    // Wait briefly for any pending threads (best effort)
     {
         std::lock_guard<std::mutex> lock(s_mutex);
         s_pending.clear();
@@ -350,18 +328,15 @@ ID3D11ShaderResourceView* Get(const std::string& website)
 {
     if (!s_initialized || website.empty()) return nullptr;
 
-    // Drain any completed async fetches
     DrainFetched();
 
     std::string domain = ExtractDomain(website);
     if (domain.empty()) return nullptr;
 
-    // Check in-memory cache
     auto it = s_cache.find(domain);
     if (it != s_cache.end())
-        return it->second; // may be nullptr (= failed)
+        return it->second; // nullptr = previously failed
 
-    // Check disk cache
     std::string diskPath = DiskCachePath(domain);
     auto fileData = ReadFile(diskPath);
     if (!fileData.empty())
@@ -371,15 +346,13 @@ ID3D11ShaderResourceView* Get(const std::string& website)
         return srv;
     }
 
-    // Offline-first: never hit the network unless the user opted in.
-    // Bundled + disk-cached icons (handled above) still work when disabled.
+    // never hit the network unless the user opted in; bundled/disk icons still work
     if (!s_network_enabled.load(std::memory_order_relaxed))
         return nullptr;
 
-    // Request async fetch
     {
         std::lock_guard<std::mutex> lock(s_mutex);
-        if (s_pending.count(domain)) return nullptr; // already fetching
+        if (s_pending.count(domain)) return nullptr;
         s_pending.insert(domain);
     }
 
@@ -387,15 +360,12 @@ ID3D11ShaderResourceView* Get(const std::string& website)
     std::thread([domain, cachePath]()
     {
         auto bytes = FetchFavicon(domain);
-
-        // Save to disk cache if successful
         if (!bytes.empty())
             WriteFile(cachePath, bytes);
-
         {
             std::lock_guard<std::mutex> lock(s_mutex);
             s_fetched.push_back({ domain, std::move(bytes) });
-            // Note: s_pending is cleaned up in DrainFetched
+            // s_pending cleaned up in DrainFetched
         }
     }).detach();
 

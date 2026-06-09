@@ -12,10 +12,9 @@ namespace favicon {
     void SetNetworkEnabled(bool enabled);
     bool IsNetworkEnabled();
 
-    // On-disk favicon cache transparency.
     struct CacheStats { int file_count = 0; uint64_t total_bytes = 0; };
     CacheStats GetCacheStats();
-    void ClearCache();   // wipes disk cache + in-memory fetched icons (keeps bundled)
+    void ClearCache();   // wipes disk + in-memory fetched icons; bundled icons survive
 
     // Returns SRV for the website's favicon, or nullptr if unavailable (yet).
     // Automatically triggers async fetch if not cached.

@@ -11,7 +11,11 @@
       "Bash(git push *)",
       "Bash(gh auth *)",
       "Bash(git fetch *)",
-      "Bash(git rev-list *)"
+      "Bash(git rev-list *)",
+      "Bash(grep -niA1 \"feature\\\\|2fa\\\\|totp\\\\|breach\\\\|sync\\\\|offline\\\\|share\\\\|import\\\\|export\\\\|generator\\\\|autofill\\\\|biometric\\\\|passkey\\\\|kdbx\\\\|keepass\" FRONTEND_OVERVIEW.md)",
+      "Bash(npx eslint *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(npx vite *)"
     ]
   }
 }

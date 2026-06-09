@@ -1,6 +1,4 @@
-// vault_db.h
-// SQLite-backed vault storage with per-Credential encryption
-// One .db file per vault (replaces .lbdb)
+// vault_db.h — SQLite vault; one .db file per vault
 
 #pragma once
 
@@ -11,106 +9,82 @@
 
 namespace vault_db {
 
-    // ============================================================
-    // Credential row (encrypted blob storage)
-    // ============================================================
     struct CredentialRow {
         std::string uuid;
         std::vector<uint8_t> encrypted_blob;
 
-        // Timestamps (Unix milliseconds UTC)
+        // Unix ms UTC
         int64_t created_at_ms = 0;
         int64_t updated_at_ms = 0;
-        int64_t deleted_at_ms = 0;  // 0 = not deleted, else Unix ms when deleted
+        int64_t deleted_at_ms = 0;  // 0 = live; nonzero = soft-deleted
 
-        // Sync state
-        int64_t server_rev = 0;     // Server revision number (0 = never synced)
+        int64_t server_rev = 0;     // 0 = never synced
         bool is_dirty = true;
 
-        // Helper methods
         bool is_deleted() const { return deleted_at_ms != 0; }
     };
 
-    // ============================================================
-    // Database lifecycle
-    // ============================================================
-
-    // Initialize/open database (creates file + tables if needed)
-    // Returns true on success
+    // creates file + tables if needed
     bool init(const std::string& db_path);
 
-    // Close database connection
     void close();
 
-    // Check if database file exists and is valid SQLite
+    // collapses WAL → main file, removes -wal/-shm; call before lock/exit/sync
+    bool checkpoint_truncate();
+
     bool exists(const std::string& db_path);
-
-    // Check if a database is currently open
     bool is_open();
-
-    // Get path of currently open database
     std::string current_path();
 
-    // ============================================================
-    // Credential CRUD operations
-    // ============================================================
-
-    // Get all credentials (non-deleted)
     std::vector<CredentialRow> get_all_credentials();
-
-    // Get single Credential by UUID
     std::optional<CredentialRow> get_credential(const std::string& uuid);
+    std::vector<CredentialRow> get_dirty_credentials();    // for sync push
+    std::vector<CredentialRow> get_deleted_credentials();  // tombstones
 
-    // Get only dirty credentials (for sync push)
-    std::vector<CredentialRow> get_dirty_credentials();
-
-    // Get deleted credentials (tombstones, for sync deletion)
-    std::vector<CredentialRow> get_deleted_credentials();
-
-    // Insert new Credential
+    // strict INSERT; UUID collision is treated as a real error (not "already imported")
     bool insert_credential(
         const std::string& uuid,
         const std::vector<uint8_t>& encrypted_blob,
         int64_t created_at_ms,
-        int64_t updated_at_ms
+        int64_t updated_at_ms,
+        std::string* out_error = nullptr
     );
 
-    // Update Credential blob + mark dirty
+    // all three outcomes are "success" from a SQL-error standpoint
+    enum class UpsertOutcome {
+        Inserted,   // new row
+        Updated,    // existing row replaced (incoming was newer)
+        Skipped,    // existing row kept (incoming was older/equal)
+    };
+
+    // newer-wins upsert; false only on SQL errors; re-import into the source vault is a no-op
+    bool upsert_credential(
+        const std::string& uuid,
+        const std::vector<uint8_t>& encrypted_blob,
+        int64_t created_at_ms,
+        int64_t updated_at_ms,
+        UpsertOutcome* out_outcome = nullptr,
+        std::string* out_error = nullptr
+    );
+
     bool update_credential(
         const std::string& uuid,
         const std::vector<uint8_t>& encrypted_blob,
         int64_t updated_at_ms
     );
 
-    // Soft delete (set deleted_at_ms, mark dirty for sync)
     bool soft_delete_credential(const std::string& uuid);
-
-    // Restore from trash (clear deleted_at_ms, mark dirty for sync)
     bool restore_credential(const std::string& uuid);
-
-    // Hard delete (after sync confirms deletion, or purge old tombstones)
     bool hard_delete_credential(const std::string& uuid);
+    int  purge_old_tombstones(int64_t older_than_ms);  // only purges already-synced tombstones
 
-    // Purge old synced tombstones (older than TTL)
-    int purge_old_tombstones(int64_t older_than_ms);
-
-    // ============================================================
-    // Sync state management
-    // ============================================================
-
-    // Mark Credential as synced (clear dirty flag, set server revision)
+    // sync state
     bool mark_synced(const std::string& uuid, int64_t server_rev);
-
-    // Mark Credential as dirty (local change)
     bool mark_dirty(const std::string& uuid);
-
-    // Clear all dirty flags (after full sync)
     bool clear_all_dirty();
-
-    // Apply server tombstone (mark as deleted from server)
     bool apply_server_tombstone(const std::string& uuid, int64_t deleted_at_ms, int64_t server_rev);
 
-    // Upsert from server (stores encrypted blob directly, only if server_rev is newer)
+    // only applies if server_rev is newer than stored
     bool upsert_from_server(
         const std::string& uuid,
         const std::vector<uint8_t>& encrypted_blob,
@@ -119,71 +93,32 @@ namespace vault_db {
         int64_t server_rev
     );
 
-    // ============================================================
-    // Key-value metadata (stored in pm_sync_state table)
-    // ============================================================
-
+    // pm_sync_state key-value store
     std::string get_meta(const std::string& key);
     bool set_meta(const std::string& key, const std::string& value);
 
-    // ============================================================
-    // Salt caching
-    // ============================================================
-
+    // salt stored as hex in pm_sync_state("encryption_salt")
     std::vector<uint8_t> get_cached_salt();
     bool set_cached_salt(const std::vector<uint8_t>& salt);
-
-    // ============================================================
-    // Transaction helpers
-    // ============================================================
 
     bool begin_transaction();
     bool commit_transaction();
     bool rollback_transaction();
 
-    // ============================================================
-    // Utility
-    // ============================================================
+    int  count_credentials();
+    int  count_dirty();
+    bool quick_integrity_check();  // PRAGMA quick_check
 
-    // Count total credentials (non-deleted)
-    int count_credentials();
-
-    // Count dirty credentials
-    int count_dirty();
-
-    // Run PRAGMA quick_check — returns true if DB is intact
-    bool quick_integrity_check();
-
-    // ============================================================
-    // 2FA configuration (vault-level)
-    // ============================================================
-
-    // Get encrypted 2FA config blob (empty if not set)
+    // vault-level 2FA blob (encrypted with master key + fixed AAD)
     std::vector<uint8_t> get_2fa_blob();
-
-    // Upsert encrypted 2FA config blob
     bool set_2fa_blob(const std::vector<uint8_t>& blob, int64_t created_ms, int64_t updated_ms);
-
-    // Delete 2FA config
     bool delete_2fa_blob();
-
-    // Quick check if 2FA is configured
     bool has_2fa();
 
-    // ============================================================
-    // Recovery key (vault-level)
-    // ============================================================
-
-    // Get encrypted recovery blob (master key encrypted with recovery key)
+    // master key encrypted with recovery key
     std::vector<uint8_t> get_recovery_blob();
-
-    // Store encrypted recovery blob
     bool set_recovery_blob(const std::vector<uint8_t>& blob, int64_t created_ms);
-
-    // Quick check if recovery key is configured
     bool has_recovery_key();
-
-    // Delete recovery blob
     bool delete_recovery_blob();
 
 }
