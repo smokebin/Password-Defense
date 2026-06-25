@@ -1913,12 +1913,56 @@ namespace ui
         return changed;
     }
 
+    // Right-click paste for the string-backed inputs. The old version memcpy'd
+    // into the string's existing buffer capped at buf_size — a fresh libc++ SSO
+    // string is ~21 bytes, so long pastes (a generated password) got truncated.
+    // Go through the std::string so it grows, insert at the caret, then reload
+    // ImGui's buffer so the edit isn't reverted while the field's focused.
+    static std::unordered_map<ImGuiID, ImVec2> s_input_caret;  // x=selStart, y=selEnd
+
+    static void RememberCaret(ImGuiID id)
+    {
+        // popup steals focus and can drop the live state, so stash it while active
+        if (ImGuiInputTextState* st = ImGui::GetInputTextState(id))
+            s_input_caret[id] = ImVec2((float)st->GetSelectionStart(),
+                                       (float)st->GetSelectionEnd());
+    }
+
+    static bool PasteAtCaret(std::string* str, ImGuiID id)
+    {
+        const char* clip = ImGui::GetClipboardText();
+        if (!clip || !*clip) return false;
+
+        const int len = (int)str->size();
+        int a = len, b = len;   // no caret remembered -> append at end
+        auto it = s_input_caret.find(id);
+        if (it != s_input_caret.end())
+        {
+            const int s0 = (int)it->second.x, s1 = (int)it->second.y;
+            a = ImClamp(ImMin(s0, s1), 0, len);
+            b = ImClamp(ImMax(s0, s1), 0, len);
+        }
+
+        str->replace((size_t)a, (size_t)(b - a), clip);   // grows as needed
+        const int caret = a + (int)strlen(clip);
+
+        if (ImGuiInputTextState* st = ImGui::GetInputTextState(id))
+        {
+            st->WantReloadUserBuf    = true;
+            st->ReloadSelectionStart = caret;
+            st->ReloadSelectionEnd   = caret;
+        }
+        s_input_caret[id] = ImVec2((float)caret, (float)caret);
+        return true;
+    }
+
     bool InputText4(const char* label,
         char* buf,
         size_t buf_size,
         ImGuiInputTextFlags flags,
         ImGuiInputTextCallback callback,
-        void* user_data)
+        void* user_data,
+        std::string* str_backing)
     {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         if (!window) return false;
@@ -2062,6 +2106,7 @@ namespace ui
 
         bool active = ImGui::IsItemActive();
         bool hovered = ImGui::IsItemHovered();
+        RememberCaret(id);
 
         ImGui::PopStyleColor(3);
         ImGui::PopStyleVar(3);
@@ -2083,8 +2128,17 @@ namespace ui
                 }
                 if (ImGui::MenuItem(ICON_MDI_CONTENT_PASTE "  Paste"))
                 {
-                    if (const char* clip = ImGui::GetClipboardText())
+                    if (str_backing)
                     {
+                        if (PasteAtCaret(str_backing, id))
+                        {
+                            buf = (char*)str_backing->data();  // may have reallocated
+                            changed = true;
+                        }
+                    }
+                    else if (const char* clip = ImGui::GetClipboardText())
+                    {
+                        // fixed-buffer fallback (no current callers)
                         size_t clip_len = strlen(clip);
                         size_t cur_len = strlen(buf);
                         size_t space = buf_size - 1 - cur_len;
@@ -2268,7 +2322,8 @@ namespace ui
             (size_t)buf_size,
             flags,
             InputTextCallback_Resize,
-            &ud
+            &ud,
+            str
         );
 
         str->resize(strlen(str->c_str()));
@@ -2490,10 +2545,21 @@ namespace ui
             (size_t)buf_size,
             flags,
             InputTextCallback_Format,
-            &ud
+            &ud,
+            str
         );
 
         str->resize(strlen(str->c_str()));
+
+        // raw right-click paste skips the edit callback — re-apply the mask.
+        // no-op for typed input (the callback already produced this exact string).
+        std::string formatted = FormatWithPattern(StripNonDigits(*str), pattern);
+        if (formatted != *str)
+        {
+            *str = formatted;
+            ud.PrevDigitCount = (int)StripNonDigits(formatted).size();
+        }
+
         prevDigits = ud.PrevDigitCount;
         return changed;
     }
@@ -2659,6 +2725,7 @@ namespace ui
 
         bool active = ImGui::IsItemActive();
         bool hovered = ImGui::IsItemHovered();
+        RememberCaret(id);
 
         ImGui::PopStyleColor(5);
         ImGui::PopStyleVar(3);
@@ -2684,11 +2751,8 @@ namespace ui
                 }
                 if (ImGui::MenuItem(ICON_MDI_CONTENT_PASTE "  Paste"))
                 {
-                    if (const char* clip = ImGui::GetClipboardText())
-                    {
-                        *str = clip;
+                    if (PasteAtCaret(str, id))
                         changed = true;
-                    }
                 }
                 if (ImGui::MenuItem(ICON_MDI_KEYBOARD "  On-Screen Keyboard"))
                 {
