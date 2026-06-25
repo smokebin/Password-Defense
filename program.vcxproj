@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>A:\prjcts\pwmngr\pw-windows\icons;A:\prjcts\pwmngr\pw-windows\tools;A:\prjcts\pwmngr\pw-windows\credentials;A:\libs\libsodium\include;A:\libs\sqlite3\include;C:\Users\Humbe\OneDrive\Desktop\folder\libs\sdk\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>icons;tools;credentials;third_party\sqlite;libs\libsodium\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard_C>Default</LanguageStandard_C>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -135,7 +135,7 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>A:\libs\libsodium\x64\Release\v143\static;A:\libs\libsodium\x64\Release\v143\dynamic;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>libs\libsodium\x64\Release\v143\static;libs\libsodium\x64\Release\v143\dynamic;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>libsodium.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
@@ -151,7 +151,7 @@
     <ClCompile Include="credentials\crypto\vault_crypto.cpp" />
     <ClCompile Include="credentials\transfer\pwm_file.cpp" />
     <ClCompile Include="credentials\transfer\kdbx_export.cpp" />
-    <ClCompile Include="A:\libs\sqlite3\sqlite3.c" />
+    <ClCompile Include="third_party\sqlite\sqlite3.c" />
     <ClCompile Include="favicon.cpp" />
     <ClCompile Include="GUI.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
