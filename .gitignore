@@ -4,9 +4,12 @@
 # Build output directories
 [Bb]in/
 [Oo]bj/
+[Xx]64/
 PasswordDefense/x64/
 
 # Build artifacts
+*.exe
+*.pdb
 *.obj
 *.iobj
 *.ipdb
@@ -16,6 +19,16 @@ PasswordDefense/x64/
 *.recipe
 *.log
 *.sarif
+
+# Visual Studio per-user / generated cruft
+*.user
+*.aps
+
+# Local vault data and config — never commit
+*.db
+*.db-shm
+*.db-wal
+config.json
 
 # Claude Code CLI binary (do not commit)
 claude.exe
