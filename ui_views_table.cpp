@@ -124,8 +124,7 @@ namespace ui
         ImGui::PushStyleColor(ImGuiCol_PopupBg, dark ? theme::PopupBg.dark : theme::PopupBg.light);
         ImGui::PushStyleColor(ImGuiCol_Border,  dark ? theme::PopupBorder.dark : theme::PopupBorder.light);
 
-        // Custom header row with select-all checkbox (compact)
-        // Minimal header row — we draw text manually for tight height control
+        // we draw header text manually for tight height control
         ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, dark ? IM_COL32(255, 255, 255, 6) : IM_COL32(0, 0, 0, 4));
         ImGui::TableHeadersRow();  // register headers for sorting (required by ImGui)
         ImGui::PopStyleColor();

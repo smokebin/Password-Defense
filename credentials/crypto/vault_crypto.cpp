@@ -215,9 +215,7 @@ namespace enc {
         data.clear();
     }
 
-    // ============================================================
-    // Hex encoding/decoding
-    // ============================================================
+    // hex encoding/decoding
     std::string bytes_to_hex(const std::vector<uint8_t>& bytes)
     {
         static const char* hex_chars = "0123456789abcdef";
