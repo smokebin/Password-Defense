@@ -338,7 +338,8 @@ namespace ui
         size_t buf_size,
         ImGuiInputTextFlags flags,
         ImGuiInputTextCallback callback,
-        void* user_data);
+        void* user_data,
+        std::string* str_backing = nullptr);
     // Password input that briefly reveals the last typed character (mobile-style)
     bool InputTextPasswordReveal(const char* label, std::string* str, ImGuiInputTextFlags extra_flags = 0, float reveal_duration_ms = 400.0f);
 
