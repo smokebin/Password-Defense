@@ -24,6 +24,9 @@ PasswordDefense/x64/
 *.user
 *.aps
 
+# External prebuilt dependencies — see README "Build" section (libsodium goes here)
+libs/
+
 # Local vault data and config — never commit
 *.db
 *.db-shm
