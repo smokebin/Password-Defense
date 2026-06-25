@@ -82,6 +82,29 @@ A zero-knowledge, **fully offline** password manager built with C++ and ImGui. Y
 - Portable single executable — no install required
 - DirectX 11 hardware-accelerated UI
 
+## Build
+
+Built with Visual Studio 2022 (toolset v143, C++20). The build config is **Release | x64**.
+
+**Prerequisites**
+- Visual Studio 2022 with the *Desktop development with C++* workload
+- Windows 10/11 SDK (installed with that workload — provides `d3d11.h`, `d3dcompiler.h`, `winhttp.h`)
+
+**Dependencies**
+- **Vendored, no action needed** (in `third_party/`): Dear ImGui, stb_image, nlohmann/json, qrcodegen, and the SQLite amalgamation (`third_party/sqlite/`).
+- **libsodium** — the one external dependency you supply. Download the prebuilt MSVC build (`libsodium-<version>-stable-msvc.zip`) from <https://download.libsodium.org/libsodium/releases/> and extract it into a `libs\libsodium\` folder at the repo root, so the layout is:
+  ```
+  libs\libsodium\include\sodium.h
+  libs\libsodium\x64\Release\v143\static\libsodium.lib
+  ```
+  (`libs\` is gitignored.) The project links `libsodium.lib` statically (`SODIUM_STATIC` is already defined).
+
+**Steps**
+1. Place libsodium as above.
+2. Open `PasswordDefense.sln` in Visual Studio 2022.
+3. Select **Release | x64** and Build (F7).
+4. The executable is written to `x64\Release\Password Defense.exe`.
+
 ## License
 
 MIT
