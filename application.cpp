@@ -1100,6 +1100,28 @@ static void render_group_input(float width)
     ui::SearchableCombo("Group##modal_group", group, userGroups, &g_shell.sb_group_counts);
 }
 
+// Group + Tags as one top-aligned row. Each column is wrapped in a group so
+// SameLine spans the whole field: SearchableCombo nudges the cursor internally
+// for its chevron hit-area, and without the group wrap SameLine keyed off that
+// chevron item, leaving the tag field misaligned with the group field.
+static void render_group_tags_row(float halfW, float colGap)
+{
+    // The Dummy()s settle SearchableCombo's trailing SetCursorScreenPos (used to
+    // restore layout after its chevron hit-area). Without an item afterwards,
+    // EndGroup's boundary check asserts that a SetCursorPos extended the group.
+    ImGui::BeginGroup();
+    render_group_input(halfW);
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    ImGui::EndGroup();
+
+    ImGui::SameLine(0, colGap);
+
+    ImGui::BeginGroup();
+    render_tag_editor(halfW);
+    ImGui::Dummy(ImVec2(0.0f, 0.0f));
+    ImGui::EndGroup();
+}
+
 static void render_credential_modal(VaultState& v)
 {
     if (!g_cred_modal.IsOpen()) return;
@@ -1278,9 +1300,7 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("Website##modal_website", &g_cred_modal.buf.website);
             ImGui::Spacing();
 
-            render_group_input(halfW);
-            ImGui::SameLine(0, colGap);
-            render_tag_editor(halfW);
+            render_group_tags_row(halfW, colGap);
             ImGui::Spacing();
         }
         else if (ct == CredType::CreditCard)
@@ -1313,9 +1333,7 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextString("Postal Code##modal_card_postal", &g_cred_modal.buf.card_postal_code);
             ImGui::Spacing();
 
-            render_group_input(halfW);
-            ImGui::SameLine(0, colGap);
-            render_tag_editor(halfW);
+            render_group_tags_row(halfW, colGap);
             ImGui::Spacing();
         }
         else if (ct == CredType::Identity)
@@ -1348,16 +1366,12 @@ static void render_credential_modal(VaultState& v)
             ui::InputTextFormatted("Phone##modal_phone", &g_cred_modal.buf.phone, "(###) ###-####");
             ImGui::Spacing();
 
-            render_group_input(halfW);
-            ImGui::SameLine(0, colGap);
-            render_tag_editor(halfW);
+            render_group_tags_row(halfW, colGap);
             ImGui::Spacing();
         }
         else
         {
-            render_group_input(halfW);
-            ImGui::SameLine(0, colGap);
-            render_tag_editor(halfW);
+            render_group_tags_row(halfW, colGap);
             ImGui::Spacing();
         }
 
@@ -4406,12 +4420,6 @@ static void render_unlocked_screen()
 
     if (render::ConsumeTrayLock())
         g_shell.footer_close_anyway = true;
-
-    if (render::ConsumeTrayQuit())
-    {
-        render::RemoveTrayIcon();
-        ::PostQuitMessage(0);
-    }
 
     if (g_shell.goto_locked_clicked)
     {

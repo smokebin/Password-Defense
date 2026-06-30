@@ -58,7 +58,6 @@ namespace render
 	void HideToTray();
 	void RestoreFromTray();
 	bool ConsumeTrayLock();   // true once when Lock clicked
-	bool ConsumeTrayQuit();   // true once when Quit clicked
 	bool IsWindowVisible();
 	void SetMinimizeToTray(bool enabled); // called each frame from application.cpp
 

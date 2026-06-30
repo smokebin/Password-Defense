@@ -91,7 +91,7 @@ Built with Visual Studio 2022 (toolset v143, C++20). The build config is **Relea
 - Windows 10/11 SDK (installed with that workload — provides `d3d11.h`, `d3dcompiler.h`, `winhttp.h`)
 
 **Dependencies**
-- **Vendored, no action needed** (in `third_party/`): Dear ImGui, stb_image, nlohmann/json, qrcodegen, and the SQLite amalgamation (`third_party/sqlite/`).
+- **Vendored, no action needed**: Dear ImGui, stb_image, nlohmann/json, and the SQLite amalgamation in `third_party/`; qrcodegen in `tools/`.
 - **libsodium** — the one external dependency you supply. Download the prebuilt MSVC build (`libsodium-<version>-stable-msvc.zip`) from <https://download.libsodium.org/libsodium/releases/> and extract it into a `libs\libsodium\` folder at the repo root, so the layout is:
   ```
   libs\libsodium\include\sodium.h

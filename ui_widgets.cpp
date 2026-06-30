@@ -1962,7 +1962,8 @@ namespace ui
         ImGuiInputTextFlags flags,
         ImGuiInputTextCallback callback,
         void* user_data,
-        std::string* str_backing)
+        std::string* str_backing,
+        float reserveRight)
     {
         ImGuiWindow* window = ImGui::GetCurrentWindow();
         if (!window) return false;
@@ -2091,7 +2092,7 @@ namespace ui
             buf_size = 2;
         }
 
-        float inputW = W - textPadX * 2 - (has_text ? 20.0f : 0.0f); // reserve room for clear btn
+        float inputW = W - textPadX * 2 - (has_text ? 20.0f : 0.0f) - reserveRight; // reserve room for clear btn (+ embedded trailing widget)
 
         bool changed = ImGui::InputTextEx(
             id_label,
@@ -2202,7 +2203,7 @@ namespace ui
         {
             const float clearSz = 18.0f;
             const float clearPad = 8.0f;
-            ImVec2 clearCenter(fieldBB.Max.x - clearSz * 0.5f - clearPad,
+            ImVec2 clearCenter(fieldBB.Max.x - clearSz * 0.5f - clearPad - reserveRight,
                 fieldBB.Min.y + fieldH * 0.5f);
             ImRect clearRect(ImVec2(clearCenter.x - clearSz * 0.5f,
                                     clearCenter.y - clearSz * 0.5f),
@@ -2293,7 +2294,7 @@ namespace ui
         return 0;
     }
 
-    bool InputTextString(const char* label, std::string* str, ImGuiInputTextFlags flags)
+    bool InputTextString(const char* label, std::string* str, ImGuiInputTextFlags flags, float reserveRight)
     {
         IM_ASSERT(str);
 
@@ -2323,7 +2324,8 @@ namespace ui
             flags,
             InputTextCallback_Resize,
             &ud,
-            str
+            str,
+            reserveRight
         );
 
         str->resize(strlen(str->c_str()));
@@ -2338,24 +2340,55 @@ namespace ui
     {
         bool changed = false;
         bool dark = IsDarkTheme();
-        const float btnSz = 34.0f; // match InputText4 field height
-        const float gap = 4.0f;
+        const float fieldH = 34.0f;  // InputText4 field box height
+        const float chevW  = 30.0f;  // chevron hit-zone reserved inside the field box
 
+        // The field spans the full width and the chevron lives *inside* its right
+        // edge, so the two read as one merged control. reserveRight keeps the typed
+        // text and the clear-x clear of the chevron zone.
         float totalW = ImGui::CalcItemWidth();
-        ImGui::SetNextItemWidth(totalW - btnSz - gap);
-        InputTextString(label, &value);
+        ImGui::SetNextItemWidth(totalW);
+        InputTextString(label, &value, 0, chevW);
         if (ImGui::IsItemDeactivatedAfterEdit())
             changed = true;
 
-        // align button to InputText4's field box, skipping the floating label area
-        ImGui::SameLine(0, gap);
-        float labelAreaH = ImGui::GetFontSize() * 0.82f + 2.0f;
-        float savedY = ImGui::GetCursorPosY();
-        ImGui::SetCursorPosY(savedY + labelAreaH);
+        // Field box geometry: InputText4 wraps itself in a group, so the item rect
+        // spans the floating label + box; the box is the bottom fieldH of it.
+        ImVec2 gmin = ImGui::GetItemRectMin();
+        ImVec2 gmax = ImGui::GetItemRectMax();
+        float boxTop = gmax.y - fieldH;
+        ImVec2 zoneMin(gmax.x - chevW, boxTop);
+        ImVec2 zoneMax(gmax.x, gmax.y);
 
         ImGui::PushID(label);
-        if (IconButtonSquare2("sc_btn", ICON_MDI_CHEVRON_DOWN, btnSz))
+
+        // Invisible button over the chevron zone. Submitted last so external
+        // IsItemActive()/Enter checks key off it exactly like the old trailing button.
+        ImGui::SetCursorScreenPos(zoneMin);
+        if (ImGui::InvisibleButton("##sc_btn", ImVec2(chevW, fieldH)))
             ImGui::OpenPopup("##sc_pick");
+        bool chevHov = ImGui::IsItemHovered();
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (chevHov)
+        {
+            ImU32 hovBg = dark ? IM_COL32(255, 255, 255, 14) : IM_COL32(0, 0, 0, 12);
+            dl->AddRectFilled(ImVec2(zoneMin.x, zoneMin.y + 1.0f),
+                              ImVec2(zoneMax.x - 1.5f, zoneMax.y - 1.0f),
+                              hovBg, 6.0f, ImDrawFlags_RoundCornersRight);
+        }
+
+        ImVec2 chSz = ImGui::CalcTextSize(ICON_MDI_CHEVRON_DOWN);
+        ImU32 chCol = chevHov ? ImGui::GetColorU32(ImGuiCol_Text)
+                              : ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        dl->AddText(ImVec2(zoneMin.x + (chevW - chSz.x) * 0.5f,
+                           boxTop + (fieldH - chSz.y) * 0.5f),
+                    chCol, ICON_MDI_CHEVRON_DOWN);
+
+        // Anchor the dropdown under the field, matched to its width.
+        ImGui::SetNextWindowPos(ImVec2(gmin.x, gmax.y + 2.0f));
+        ImGui::SetNextWindowSizeConstraints(ImVec2(gmax.x - gmin.x, 0.0f),
+                                            ImVec2(gmax.x - gmin.x, FLT_MAX));
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 8));
         ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);

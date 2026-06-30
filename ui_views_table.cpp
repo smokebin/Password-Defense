@@ -532,6 +532,11 @@ namespace ui
 
                 {
                     ImDrawList* rdl = ImGui::GetWindowDrawList();
+                    // After the cell loop the draw list's clip rect is the last column's
+                    // (narrow) — which clipped away these full-width divider lines (the
+                    // hidden TOTP column made the clip even narrower). Expand the clip to
+                    // the whole row so the carved dividers actually render.
+                    rdl->PushClipRect(ImVec2(rowMinX, rowStartY - 2.0f), ImVec2(rowMaxX, rowEndY + 2.0f), false);
 
                     if (selected)
                     {
@@ -557,6 +562,8 @@ namespace ui
                         rdl->AddLine(ImVec2(rowMinX, rowEndY - 1.0f), ImVec2(rowMaxX, rowEndY - 1.0f),
                             dark ? IM_COL32(0, 0, 0, 20) : IM_COL32(0, 0, 0, 14), 1.0f);
                     }
+
+                    rdl->PopClipRect();
                 }
 
                 // Double-click to edit
