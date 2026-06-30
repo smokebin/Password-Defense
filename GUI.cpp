@@ -14,7 +14,6 @@
 static NOTIFYICONDATAW g_nid = {};
 static bool g_tray_icon_added   = false;
 static bool g_tray_lock_requested = false;
-static bool g_tray_quit_requested = false;
 static bool g_window_visible    = true;
 static bool g_minimize_to_tray  = false;  // synced from cfg each frame
 #include "icons/IconsMaterialDesignIcons.h"
@@ -216,13 +215,6 @@ bool render::ConsumeTrayLock()
 {
 	bool v = g_tray_lock_requested;
 	g_tray_lock_requested = false;
-	return v;
-}
-
-bool render::ConsumeTrayQuit()
-{
-	bool v = g_tray_quit_requested;
-	g_tray_quit_requested = false;
 	return v;
 }
 
@@ -670,7 +662,13 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 			g_tray_lock_requested = true;
 			return 0;
 		case IDM_TRAY_QUIT:
-			g_tray_quit_requested = true;
+			// Quit straight from here so it works while hidden to tray. The render
+			// loop parks in Sleep(100) and skips DisplayProgram() when the window
+			// isn't visible (main.cpp), so anything that waits on a render frame to
+			// quit only fired when the window was already showing. Same teardown as
+			// WM_DESTROY.
+			render::RemoveTrayIcon();
+			::PostQuitMessage(0);
 			return 0;
 		}
 		break;

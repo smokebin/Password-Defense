@@ -318,7 +318,7 @@ namespace ui
 
     void RenderShell(ShellState& s, const char* window_title = "Password Manager");
 
-    bool InputTextString(const char* label, std::string* str, ImGuiInputTextFlags flags = 0);
+    bool InputTextString(const char* label, std::string* str, ImGuiInputTextFlags flags = 0, float reserveRight = 0.0f);
     bool InputTextFormatted(const char* label, std::string* str, const char* pattern, ImGuiInputTextFlags flags = 0);
     std::string StripNonDigits(const std::string& s);
     std::string FormatWithPattern(const std::string& digits, const char* pattern);
@@ -339,7 +339,8 @@ namespace ui
         ImGuiInputTextFlags flags,
         ImGuiInputTextCallback callback,
         void* user_data,
-        std::string* str_backing = nullptr);
+        std::string* str_backing = nullptr,
+        float reserveRight = 0.0f);
     // Password input that briefly reveals the last typed character (mobile-style)
     bool InputTextPasswordReveal(const char* label, std::string* str, ImGuiInputTextFlags extra_flags = 0, float reveal_duration_ms = 400.0f);
 
