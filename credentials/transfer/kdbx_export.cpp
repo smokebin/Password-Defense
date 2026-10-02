@@ -357,7 +357,7 @@ static std::string build_xml(
     xml << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
         << "<KeePassFile>\n"
         << "\t<Meta>\n"
-        << "\t\t<Generator>pwmngr</Generator>\n"
+        << "\t\t<Generator>Password Defense</Generator>\n"
         << "\t\t<DatabaseName>Export</DatabaseName>\n"
         << "\t\t<MemoryProtection>\n"
         << "\t\t\t<ProtectPassword>True</ProtectPassword>\n"
@@ -383,10 +383,10 @@ static std::string build_xml(
         }
 
         if (c->is_favorite) {
-            xml << "\t\t\t\t\t<String><Key>_pwmngr_favorite</Key><Value>True</Value></String>\n";
+            xml << "\t\t\t\t\t<String><Key>_pd_favorite</Key><Value>True</Value></String>\n";
         }
         if (c->is_pinned) {
-            xml << "\t\t\t\t\t<String><Key>_pwmngr_pinned</Key><Value>True</Value></String>\n";
+            xml << "\t\t\t\t\t<String><Key>_pd_pinned</Key><Value>True</Value></String>\n";
         }
 
         // "otp" key with Protected="True" is the KeePassXC convention

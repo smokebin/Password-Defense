@@ -1943,7 +1943,7 @@ namespace ui
                         s_2fa_data = twofa_ops::generate_new();
                         s_2fa_verify_code.clear();
                         s_2fa_verify_error.clear();
-                        std::string qr_uri = totp::generate_otpauth_uri(s_2fa_data.totp_secret_b32, "pwmngr", "vault");
+                        std::string qr_uri = totp::generate_otpauth_uri(s_2fa_data.totp_secret_b32, "Password Defense", "vault");
                         CreateQRTexture(qr_uri);
                     }
 
@@ -1974,7 +1974,7 @@ namespace ui
                         }
 
                         ImGui::Dummy(ImVec2(0, 4));
-                        std::string uri = totp::generate_otpauth_uri(s_2fa_data.totp_secret_b32, "pwmngr", "vault");
+                        std::string uri = totp::generate_otpauth_uri(s_2fa_data.totp_secret_b32, "Password Defense", "vault");
                         ImGui::TextUnformatted("OTP Auth URI:");
                         ImGui::PushFont(render::FontSmall);
                         ImGui::TextWrapped("%s", uri.c_str());

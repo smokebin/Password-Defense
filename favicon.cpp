@@ -113,7 +113,7 @@ static std::vector<uint8_t> FetchFavicon(const std::string& domain)
     std::vector<uint8_t> result;
 
 #ifdef _WIN32
-    HINTERNET hSession = WinHttpOpen(L"PwMngr/1.0",
+    HINTERNET hSession = WinHttpOpen(L"PasswordDefense/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return result;
