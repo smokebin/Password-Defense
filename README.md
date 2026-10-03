@@ -2,9 +2,13 @@
 
 A zero-knowledge, **fully offline** password manager built with C++ and ImGui. Your master password never leaves your device — all encryption happens locally using XChaCha20-Poly1305 and Argon2id. The app makes **no network connections by default**; the only two features that can reach the internet are opt-in and OFF until you enable them (see [Network & Privacy](#network--privacy)).
 
-## Screenshot
+## Screenshots
 
-![Password Defense UI](screenshots/ui.png)
+![Password Defense — three-pane view with Security Center](screenshots/ui.png)
+
+| Table view | Light theme |
+| --- | --- |
+| ![Table view](screenshots/table-view.png) | ![Light theme](screenshots/light-theme.png) |
 
 ## Features
 
