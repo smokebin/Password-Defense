@@ -428,6 +428,14 @@ namespace helpers
         return false;
     }
 
+    size_t utf8_codepoint_count(const std::string& s)
+    {
+        size_t n = 0;
+        for (unsigned char ch : s)
+            if ((ch & 0xC0) != 0x80) ++n;  // skip continuation bytes
+        return n;
+    }
+
     PwStrength analyze_password(const std::string& pw)
     {
         PwStrength r;

@@ -85,6 +85,12 @@ namespace helpers
         int    charClasses = 0;
     };
 
+    // Single-factor minimum for master and export passwords (NIST SP 800-63B-4 §3.1.1.2)
+    inline constexpr size_t kMinPasswordChars = 15;
+
+    // Counts characters, not bytes: continuation bytes (10xxxxxx) are skipped
+    size_t      utf8_codepoint_count(const std::string& s);
+
     PwStrength   analyze_password(const std::string& pw);
     unsigned int strength_color(int score);     // IM_COL32 RGBA (implemented in helpers.cpp)
     const char* strength_label(int score);
