@@ -36,4 +36,14 @@ namespace cred_ops {
     bool has_pending_changes();
     int  count();
 
+    // Master-key verifier, stored in pm_sync_state. Lets a wrong password be
+    // rejected even when the vault has no live credentials to decrypt.
+    enum class KeyCheck { Match, Mismatch, Missing };  // Missing = vault predates the verifier
+    KeyCheck check_master_key(const std::vector<uint8_t>& master_key);
+    bool store_master_key_check(const std::vector<uint8_t>& master_key);
+
+    // Re-encrypts rows still in the pre-AAD format, live and trashed alike.
+    // Safe to run on every unlock; rows already current are skipped.
+    void migrate_legacy_rows(const std::vector<uint8_t>& master_key);
+
 }

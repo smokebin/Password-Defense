@@ -10,6 +10,7 @@ namespace twofa_ops {
     struct TwoFactorData {
         std::string totp_secret_b32;
         std::vector<std::string> recovery_codes;
+        int64_t last_totp_step = 0;  // highest TOTP time step accepted so far (RFC 6238 §5.2)
     };
 
     TwoFactorData generate_new();  // random secret + 8 recovery codes; doesn't save

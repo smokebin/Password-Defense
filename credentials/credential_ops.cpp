@@ -8,8 +8,8 @@
 
 namespace cred_ops {
 
-    // UUID is AAD; needs_migration set if legacy no-AAD fallback succeeded
-    static Credential decrypt_row(const vault_db::CredentialRow& row, const std::vector<uint8_t>& key, bool* needs_migration = nullptr)
+    // UUID is AAD. Pre-AAD rows are upgraded by migrate_legacy_rows(), not here.
+    static Credential decrypt_row(const vault_db::CredentialRow& row, const std::vector<uint8_t>& key)
     {
         Credential c{};
         c.uuid = row.uuid;
@@ -17,13 +17,6 @@ namespace cred_ops {
         c.updated_at_ms = row.updated_at_ms;
         c.deleted_at_ms = row.deleted_at_ms;
         std::string json = enc::decrypt_credential(row.encrypted_blob, key, row.uuid);
-
-        // fallback for older blobs written without AAD
-        if (json.empty()) {
-            json = enc::decrypt_credential_legacy(row.encrypted_blob, key);
-            if (!json.empty() && needs_migration)
-                *needs_migration = true;
-        }
 
         if (json.empty()) return c;
 
@@ -133,6 +126,65 @@ namespace cred_ops {
         return blob;
     }
 
+    // Fixed plaintext, bound to its own AAD so the blob can't pass as a credential.
+    static constexpr const char* kKeyCheckPlain = "vault-key-check-v1";
+    static constexpr const char* kKeyCheckAAD   = "vault-key-check";
+    static constexpr const char* kKeyCheckMeta  = "key_check";
+
+    KeyCheck check_master_key(const std::vector<uint8_t>& master_key)
+    {
+        const std::string hex = vault_db::get_meta(kKeyCheckMeta);
+        if (hex.empty())
+            return KeyCheck::Missing;
+
+        const std::vector<uint8_t> blob = enc::hex_to_bytes(hex);
+        std::string plain = enc::decrypt_credential(blob, master_key, kKeyCheckAAD);
+        const bool ok = (plain == kKeyCheckPlain);
+        enc::secure_zero(plain);
+
+        return ok ? KeyCheck::Match : KeyCheck::Mismatch;
+    }
+
+    bool store_master_key_check(const std::vector<uint8_t>& master_key)
+    {
+        auto blob = enc::encrypt_credential(kKeyCheckPlain, master_key, kKeyCheckAAD);
+        if (blob.empty())
+            return false;
+
+        return vault_db::set_meta(kKeyCheckMeta, enc::bytes_to_hex(blob));
+    }
+
+    void migrate_legacy_rows(const std::vector<uint8_t>& master_key)
+    {
+        if (master_key.empty() || !vault_db::is_open())
+            return;
+
+        // Trashed rows are never loaded into the UI, so they have to be handled here
+        // or they would keep the no-AAD format indefinitely.
+        auto rows = vault_db::get_all_credentials();
+        auto trashed = vault_db::get_deleted_credentials();
+        rows.insert(rows.end(), trashed.begin(), trashed.end());
+
+        for (const auto& row : rows) {
+            std::string current = enc::decrypt_credential(row.encrypted_blob, master_key, row.uuid);
+            const bool already_current = !current.empty();
+            enc::secure_zero(current);
+            if (already_current)
+                continue;
+
+            // Authenticated under this key, so it's ours. Neither format matching means
+            // the row is left as-is, same as before.
+            std::string json = enc::decrypt_credential_legacy(row.encrypted_blob, master_key);
+            if (json.empty())
+                continue;
+
+            auto blob = enc::encrypt_credential(json, master_key, row.uuid);
+            enc::secure_zero(json);
+            if (!blob.empty())
+                vault_db::set_credential_blob(row.uuid, blob);
+        }
+    }
+
     std::vector<Credential> load_all(const std::vector<uint8_t>& master_key)
     {
         std::vector<Credential> results;
@@ -141,28 +193,13 @@ namespace cred_ops {
             return results;
 
         auto rows = vault_db::get_all_credentials();
-        std::vector<std::string> migrate_uuids;  // blobs that need re-encryption with AAD
 
         for (const auto& row : rows) {
-            bool needs_migration = false;
-            Credential c = decrypt_row(row, master_key, &needs_migration);
+            Credential c = decrypt_row(row, master_key);
 
             if (!c.title.empty() || !c.password.empty() || !c.user.empty()
                 || !c.card_number.empty() || !c.id_number.empty() || !c.notes.empty()) {
-                if (needs_migration && !c.uuid.empty())
-                    migrate_uuids.push_back(c.uuid);
                 results.push_back(std::move(c));
-            }
-        }
-
-        if (!migrate_uuids.empty()) {
-            for (const auto& uuid : migrate_uuids) {
-                for (const auto& c : results) {
-                    if (c.uuid == uuid) {
-                        update(uuid, c, master_key);
-                        break;
-                    }
-                }
             }
         }
 

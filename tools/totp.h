@@ -29,6 +29,10 @@ namespace totp {
     bool verify_code(const std::string& secret_b32, const std::string& code, int64_t unix_sec, int window = 1);
     bool verify_code_now(const std::string& secret_b32, const std::string& code);
 
+    // Same check as verify_code, but reports the matched time-step counter in *out_step
+    // (may be null). Replay protection compares this counter, not the code string.
+    bool verify_code_step(const std::string& secret_b32, const std::string& code, int64_t unix_sec, int window, int64_t* out_step);
+
     std::string generate_otpauth_uri(const std::string& secret_b32, const std::string& issuer, const std::string& account);
 
     // SHA-1 digest (20 bytes) — used by HIBP breach check

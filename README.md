@@ -22,7 +22,7 @@ A zero-knowledge, **fully offline** password manager built with C++ and ImGui. Y
 ### Security & Encryption
 - **XChaCha20-Poly1305** authenticated encryption (per-credential)
 - **Argon2id** key derivation with optional high-security mode (4 iterations / 1 GB RAM)
-- AAD-binding (per-credential UUIDs prevent ciphertext-swap attacks)
+- AAD-binding (per-credential UUIDs prevent ciphertext-swap attacks; vaults from before AAD binding are re-encrypted on their first unlock)
 - Memory pinning, secure zeroing, master password re-prompt
 - Auto-lock, clipboard auto-clear, lockout protection, self-destruct on exit
 
@@ -35,7 +35,7 @@ A zero-knowledge, **fully offline** password manager built with C++ and ImGui. Y
 
 ### Two-Factor Authentication
 - TOTP support with live countdown
-- QR code setup, recovery codes (10 one-time-use), recovery key
+- QR code setup, recovery codes (8 one-time-use), recovery key (with 2FA on, the recovery key also needs a 2FA code)
 
 ### Password Generator
 - Configurable length and character sets
