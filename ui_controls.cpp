@@ -1872,6 +1872,16 @@ namespace ui
             {
                 bool twofa_on = twofa_ops::is_enabled();
 
+                // Turning 2FA off needs the master password, like the other security toggles.
+                // The confirm popup only opens once the reprompt has been approved.
+                static bool s_twofa_disable_pending = false;
+                if (s_twofa_disable_pending && IsRepromptApproved(RepromptAction::DisableSecuritySetting))
+                {
+                    ClearRepromptApproval(RepromptAction::DisableSecuritySetting);
+                    s_twofa_disable_pending = false;
+                    ImGui::OpenPopup("Disable 2FA###disable_2fa_modal");
+                }
+
                 SettingRowSpec row{};
                 row.id = ImGui::GetID("twofa_toggle");
                 row.title = "Two-Factor Auth";
@@ -1885,7 +1895,12 @@ namespace ui
                 {
                     if (twofa_on)
                     {
-                        ImGui::OpenPopup("Disable 2FA###disable_2fa_modal");
+                        // Locked-out reprompts never open the modal, so don't wait on an approval that can't come
+                        if (!IsRepromptLockedOut())
+                        {
+                            s_twofa_disable_pending = true;
+                            RequestReprompt(RepromptAction::DisableSecuritySetting, "");
+                        }
                     }
                     else
                     {

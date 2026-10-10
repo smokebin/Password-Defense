@@ -1,6 +1,7 @@
 // ui_modals.cpp — toasts, clipboard auto-clear, reprompt, trash, security center, recovery key
 #include "ui_internal.h"
 #include "vault_db.h"
+#include <sodium.h>
 
 namespace ui
 {
@@ -141,6 +142,12 @@ namespace ui
         bool g_reprompt_modal_open = false;
         std::string g_reprompt_master_password; // stored for verification
 
+        // Overwrites the bytes before the string is reused, so old contents don't linger
+        void WipeString(std::string& s) {
+            if (!s.empty()) sodium_memzero(&s[0], s.size());
+            s.clear();
+        }
+
         const char* GetRepromptActionName(RepromptAction action) {
             switch (action) {
                 case RepromptAction::RevealPassword: return "reveal password";
@@ -154,6 +161,7 @@ namespace ui
     }
 
     void SetRepromptMasterPassword(const std::string& password) {
+        WipeString(g_reprompt_master_password);
         g_reprompt_master_password = password;
     }
 
@@ -161,6 +169,7 @@ namespace ui
         if (g_reprompt_locked_out) return false;
 
         if (!master_password.empty()) {
+            WipeString(g_reprompt_master_password);
             g_reprompt_master_password = master_password;
         }
 
@@ -188,7 +197,7 @@ namespace ui
         if (!needs_reprompt) return true;
 
         g_reprompt_pending = action;
-        g_reprompt_password_buf.clear();
+        WipeString(g_reprompt_password_buf);
         g_reprompt_error.clear();
         g_reprompt_modal_open = true;
         return false;
@@ -260,7 +269,7 @@ namespace ui
 
             if (StyledButton("##reprompt_cancel", "Cancel", ImVec2(btnW, btnH)) || escape_pressed) {
                 g_reprompt_pending = RepromptAction::None;
-                g_reprompt_password_buf.clear();
+                WipeString(g_reprompt_password_buf);
                 g_reprompt_error.clear();
                 g_reprompt_modal_open = false;
                 ImGui::CloseCurrentPopup();
@@ -274,7 +283,7 @@ namespace ui
                 if (g_reprompt_password_buf == g_reprompt_master_password) {
                     g_reprompt_approved = g_reprompt_pending;
                     g_reprompt_pending = RepromptAction::None;
-                    g_reprompt_password_buf.clear();
+                    WipeString(g_reprompt_password_buf);
                     g_reprompt_error.clear();
                     g_reprompt_failed_count = 0;
                     g_reprompt_modal_open = false;
@@ -284,14 +293,17 @@ namespace ui
                     int lockout_count = cfg::get_reprompt_lockout_count();
                     int remaining = lockout_count - g_reprompt_failed_count;
 
-                    if (remaining <= 0) {
+                    // 0 is the "Never" option: no lockout, just the plain error
+                    if (lockout_count <= 0) {
+                        g_reprompt_error = "Incorrect password.";
+                    } else if (remaining <= 0) {
                         g_reprompt_locked_out = true;
                         g_reprompt_error = "Too many failed attempts. Vault locked.";
                         ShowToast("Vault locked - too many attempts", ToastType::Error, 4.0f);
                     } else {
                         g_reprompt_error = "Incorrect password. " + std::to_string(remaining) + " attempt(s) remaining.";
                     }
-                    g_reprompt_password_buf.clear();
+                    WipeString(g_reprompt_password_buf);
                 }
             }
             ImGui::EndDisabled();
@@ -303,7 +315,7 @@ namespace ui
 
         if (!modal_open) {
             g_reprompt_pending = RepromptAction::None;
-            g_reprompt_password_buf.clear();
+            WipeString(g_reprompt_password_buf);
             g_reprompt_error.clear();
             g_reprompt_modal_open = false;
         }
