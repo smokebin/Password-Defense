@@ -1396,10 +1396,11 @@ namespace ui
                     snprintf(tbuf, sizeof(tbuf), "%lldd", (long long)(remain_ms / time_ms::DAY));
                 else if (remain_ms >= time_ms::HOUR)
                     snprintf(tbuf, sizeof(tbuf), "%lldh", (long long)(remain_ms / time_ms::HOUR));
-                else if (remain_ms >= time_ms::MINUTE)
-                    snprintf(tbuf, sizeof(tbuf), "%lldm", (long long)(remain_ms / time_ms::MINUTE));
-                else
-                    snprintf(tbuf, sizeof(tbuf), "<1m");
+                else {
+                    // under an hour: live M:SS countdown (reads as a real self-destruct)
+                    long long total_sec = (long long)(remain_ms / 1000);
+                    snprintf(tbuf, sizeof(tbuf), "%lld:%02lld", total_sec / 60, total_sec % 60);
+                }
                 char label[64];
                 snprintf(label, sizeof(label), ICON_MDI_TIMER " %s", tbuf);
                 ImVec2 sz = ImGui::CalcTextSize(label);
@@ -2210,10 +2211,11 @@ namespace ui
                             snprintf(tbuf, sizeof(tbuf), "%lldd", (long long)(remain_ms / time_ms::DAY));
                         else if (remain_ms >= time_ms::HOUR)
                             snprintf(tbuf, sizeof(tbuf), "%lldh", (long long)(remain_ms / time_ms::HOUR));
-                        else if (remain_ms >= time_ms::MINUTE)
-                            snprintf(tbuf, sizeof(tbuf), "%lldm", (long long)(remain_ms / time_ms::MINUTE));
-                        else
-                            snprintf(tbuf, sizeof(tbuf), "<1m");
+                        else {
+                            // under an hour: live M:SS countdown (reads as a real self-destruct)
+                            long long total_sec = (long long)(remain_ms / 1000);
+                            snprintf(tbuf, sizeof(tbuf), "%lld:%02lld", total_sec / 60, total_sec % 60);
+                        }
                         char label[64];
                         snprintf(label, sizeof(label), ICON_MDI_TIMER " %s", tbuf);
                         ImVec2 sz = ImGui::CalcTextSize(label);

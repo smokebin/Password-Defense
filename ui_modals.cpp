@@ -18,6 +18,7 @@ namespace ui
                 case ToastType::Success: return colors::ToastSuccess;
                 case ToastType::Error:   return colors::ToastError;
                 case ToastType::Info:    return colors::ToastInfo;
+                case ToastType::Destruct: return colors::ToastDestruct;
             }
             return colors::ToastDefault;
         }
@@ -27,6 +28,7 @@ namespace ui
                 case ToastType::Success: return ICON_MDI_CHECK;
                 case ToastType::Error:   return ICON_MDI_CLOSE;
                 case ToastType::Info:    return ICON_MDI_INFORMATION;
+                case ToastType::Destruct: return ICON_MDI_TIMER_SAND_COMPLETE;
             }
             return "";
         }
@@ -45,14 +47,13 @@ namespace ui
         ImGuiIO& io = ImGui::GetIO();
         const float dt = io.DeltaTime;
 
-        const float toastW = 220.0f;
         const float toastH = 36.0f;
         const float padding = 12.0f;
         const float spacing = 8.0f;
         const float fadeTime = 0.25f;
         const float cornerRadius = 6.0f;
 
-        const float startX = io.DisplaySize.x - toastW - padding;
+        const float rightEdge = io.DisplaySize.x - padding;   // toasts right-anchored; each sized to its own text
         float currentY = io.DisplaySize.y - padding;
 
         ImDrawList* dl = ImGui::GetForegroundDrawList();
@@ -75,6 +76,11 @@ namespace ui
             }
 
             currentY -= toastH;
+
+            // width fits the text: icon zone (text starts at +32) + text + 14px right pad, min 120
+            const float textW = ImGui::CalcTextSize(t.message.c_str()).x;
+            const float toastW = ImMax(120.0f, 32.0f + textW + 14.0f);
+            const float startX = rightEdge - toastW;
 
             ImU32 bgColor = GetToastColor(t.type);
             bgColor = (bgColor & 0x00FFFFFF) | ((ImU32)(alpha * 230) << 24);

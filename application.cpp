@@ -277,7 +277,7 @@ struct CredentialModal
     bool is_pinned = false;
     bool is_favorite = false;
     bool is_timed = false;
-    int  duration_idx = 3;        // default: 24 hours
+    int  duration_idx = 4;        // default: 24 hours
     int  expiry_action_idx = 0;   // default: auto-trash
     helpers::GenOptions gen_opt{ 30, true, true, true, true, false };
 
@@ -301,7 +301,7 @@ struct CredentialModal
         is_pinned = false;
         is_favorite = false;
         is_timed = false;
-        duration_idx = 3;
+        duration_idx = 4;
         expiry_action_idx = 0;
         selected_type = CredType::Password;
         edit_id = -1;
@@ -324,7 +324,7 @@ struct CredentialModal
         is_pinned = c.is_pinned;
         is_favorite = c.is_favorite;
         is_timed = (c.expires_at_ms > 0);
-        duration_idx = 3;  // default to 24h when editing
+        duration_idx = 4;  // default to 24h when editing
         expiry_action_idx = c.expiry_action;
         selected_type = c.type;
         edit_id = c.id;
@@ -346,7 +346,7 @@ struct CredentialModal
         is_pinned = false;
         is_favorite = false;
         is_timed = false;
-        duration_idx = 3;
+        duration_idx = 4;
         expiry_action_idx = 0;
         selected_type = CredType::Password;
         edit_id = -1;
@@ -1127,6 +1127,7 @@ static void render_credential_modal(VaultState& v)
     if (!g_cred_modal.IsOpen()) return;
 
     static constexpr int64_t timer_dur_ms[] = {
+        time_ms::MINUTE,            //   1 min  (short — ephemeral shares)
         30 * time_ms::MINUTE,       //  30 min
         time_ms::HOUR,              //   1 hour
         6 * time_ms::HOUR,          //   6 hours
@@ -1443,7 +1444,7 @@ static void render_credential_modal(VaultState& v)
 
         if (g_cred_modal.is_timed)
         {
-            static const char* timer_duration_labels[] = { "30 min", "1 hour", "6 hours", "24 hours", "7 days", "30 days", "90 days" };
+            static const char* timer_duration_labels[] = { "1 min", "30 min", "1 hour", "6 hours", "24 hours", "7 days", "30 days", "90 days" };
             static const char* expiry_action_labels[]  = { "Auto-trash", "Flag only" };
 
             ImGui::Dummy(ImVec2(0, 2));
@@ -2223,6 +2224,7 @@ static void TickCredentialExpiry()
 
     const int64_t now_ms = helpers::now_unix_ms();
     bool changed = false;
+    std::vector<int> trashed_ids;  // auto-trashed creds to drop from memory after the loop
 
     for (auto& c : v.creds) {
         if (c.expires_at_ms <= 0) continue;           // no timer or already flagged
@@ -2233,11 +2235,16 @@ static void TickCredentialExpiry()
         changed = true;
 
         if (c.expiry_action == 0) {
-            c.deleted_at_ms = now_ms;
-            c.updated_at_ms = now_ms;
+            // mirror a manual trash: persist the soft-delete straight to the DB so it
+            // lands in Trash (recoverable), then drop it from memory below. Just setting
+            // c.deleted_at_ms here is lost on save (update_credential ignores that column)
+            // and would even be restored on the next save (see the restore check in save_vault_to_disk).
+            if (!c.uuid.empty())
+                cred_ops::remove(c.uuid);
+            trashed_ids.push_back(c.id);
             char toast[256];
             snprintf(toast, sizeof(toast), "Timed credential trashed: %s", c.title.c_str());
-            ui::ShowToast(toast, ui::ToastType::Info);
+            ui::ShowToast(toast, ui::ToastType::Destruct);
         } else {
             // flag only: negate expires_at_ms to mark as expired without trashing
             c.expires_at_ms = -c.expires_at_ms;
@@ -2248,9 +2255,23 @@ static void TickCredentialExpiry()
         }
     }
 
+    // erase auto-trashed creds from memory after iterating (mirrors manual delete);
+    // leaving them in v.creds would make the next save restore them out of Trash
+    if (!trashed_ids.empty()) {
+        std::unordered_set<int> drop(trashed_ids.begin(), trashed_ids.end());
+        v.creds.erase(
+            std::remove_if(v.creds.begin(), v.creds.end(),
+                [&](const Credential& c) { return drop.count(c.id) != 0; }),
+            v.creds.end());
+    }
+
     if (changed) {
         VaultMarkChanged(v, "EXPIRY");
         g_autosave.last_change_time = ImGui::GetTime();
+        // refresh the view so trashed/expired creds drop out live (mirrors manual trash)
+        rebuild_groups(g_shell, v.creds);
+        rebuild_tags(g_shell, v.creds);
+        ui::ForgetVaultRowState(GetActiveVaultKey());
     }
 }
 
@@ -3785,6 +3806,7 @@ static void render_unlocked_screen()
                     s_csv_import_error = s_csv_result.error;
                 }
                 s_csv_import_modal = true;
+                g_shell.settings_modal_open = false;   // close Settings first — CSV modal is a sibling top-level popup (flashes behind it otherwise)
                 ImGui::OpenPopup("Import CSV###csv_import_modal");
             }
         }
@@ -3920,6 +3942,10 @@ static void render_unlocked_screen()
 
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(2);
+
+            // Modal just closed → return to the Settings page it was launched from.
+            if (!s_csv_import_modal)
+                g_shell.settings_modal_open = true;
         }
     }
 

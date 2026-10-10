@@ -169,6 +169,7 @@ std::vector<ui::AccordionItem> build_accordion_items(
 
     for (const auto& c : creds)
     {
+        if (c.is_deleted()) continue;   // trashed creds (incl. auto-expired) never show in the main list
         if (!type_filters.empty() && type_filters.find(c.type) == type_filters.end()) continue;
         if (!group_filters.empty() && group_filters.find(c.group) == group_filters.end()) continue;
 
