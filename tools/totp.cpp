@@ -287,19 +287,29 @@ std::string generate_random_secret()
     return base32_encode(buf);
 }
 
-bool verify_code(const std::string& secret_b32, const std::string& code, int64_t unix_sec, int window)
+bool verify_code_step(const std::string& secret_b32, const std::string& code, int64_t unix_sec, int window, int64_t* out_step)
 {
     auto secret = base32_decode(secret_b32);
     if (secret.size() < 10) return false;
 
+    bool matched = false;
     for (int i = -window; i <= window; ++i) {
-        std::string expected = generate_code(secret, unix_sec + i * 30);
-        // constant-time compare to prevent timing side-channel
+        const int64_t t = unix_sec + i * 30;
+        std::string expected = generate_code(secret, t);
+        // constant-time compare to prevent timing side-channel; no early exit
         if (expected.size() == code.size() &&
             sodium_memcmp(expected.data(), code.data(), expected.size()) == 0)
-            return true;
+        {
+            matched = true;
+            if (out_step) *out_step = t / 30;  // same T as generate_code (RFC 6238)
+        }
     }
-    return false;
+    return matched;
+}
+
+bool verify_code(const std::string& secret_b32, const std::string& code, int64_t unix_sec, int window)
+{
+    return verify_code_step(secret_b32, code, unix_sec, window, nullptr);
 }
 
 bool verify_code_now(const std::string& secret_b32, const std::string& code)

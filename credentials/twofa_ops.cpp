@@ -9,10 +9,12 @@
 #include <sodium.h>
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 
 namespace twofa_ops {
 
 static const std::string kTwoFaAAD = "vault-2fa-config";  // fixed AAD, not a credential UUID
+static constexpr int kTotpWindowSteps = 1;                 // accepts one step either side for clock skew
 
 // A-Z minus O/I, digits 2-9 (no 0/1) — avoids ambiguous glyphs
 static const char kRecoveryCharset[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -53,6 +55,7 @@ TwoFactorData load(const std::vector<uint8_t>& master_key)
     try {
         auto j = nlohmann::json::parse(json_str);
         data.totp_secret_b32 = j.value("totp_secret", "");
+        data.last_totp_step = j.value("last_totp_step", int64_t(0));
         if (j.contains("recovery_codes") && j["recovery_codes"].is_array()) {
             for (const auto& c : j["recovery_codes"])
                 data.recovery_codes.push_back(c.get<std::string>());
@@ -70,6 +73,7 @@ bool save(const TwoFactorData& data, const std::vector<uint8_t>& master_key)
     nlohmann::json j;
     j["totp_secret"] = data.totp_secret_b32;
     j["recovery_codes"] = data.recovery_codes;
+    j["last_totp_step"] = data.last_totp_step;
 
     std::string json_str = j.dump();
     std::vector<uint8_t> blob = enc::encrypt_credential(json_str, master_key, kTwoFaAAD);
@@ -91,7 +95,20 @@ bool verify_totp(const std::string& code, const std::vector<uint8_t>& master_key
     TwoFactorData data = load(master_key);
     if (data.totp_secret_b32.empty()) return false;
 
-    return totp::verify_code_now(data.totp_secret_b32, code);
+    int64_t step = 0;
+    if (!totp::verify_code_step(data.totp_secret_b32, code, (int64_t)std::time(nullptr), kTotpWindowSteps, &step))
+        return false;
+
+    // RFC 6238 §5.2: the verifier MUST NOT accept the second attempt of an OTP.
+    // Anything at or before the last accepted step is a replay, including the
+    // neighbouring step that is still inside the window.
+    if (step <= data.last_totp_step)
+        return false;
+
+    // Persist the step before accepting. If the write fails the code must not
+    // count, or it could be replayed.
+    data.last_totp_step = step;
+    return save(data, master_key);
 }
 
 static std::string normalize_recovery(const std::string& input)
@@ -126,8 +143,8 @@ bool verify_recovery(const std::string& code, const std::vector<uint8_t>& master
     if (match_idx < 0) return false;
 
     data.recovery_codes.erase(data.recovery_codes.begin() + match_idx);
-    save(data, master_key);
-    return true;
+    // The code only counts as used once the write has landed; otherwise it stays valid.
+    return save(data, master_key);
 }
 
 bool is_enabled()
