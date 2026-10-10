@@ -1740,6 +1740,64 @@ static bool disk_stamp_changed(const VaultState& v)
     return mt != v.last_disk_mtime || (uintmax_t)sz != v.last_disk_size;
 }
 
+/**
+ * @brief Decrypts the vault's credentials and marks the session unlocked.
+ *
+ * Only called once the master key is known to be right and any second factor
+ * has passed. Keeping this step last means plaintext credentials never exist
+ * for a wrong key or while a 2FA code is still pending.
+ *
+ * @return false if this is a legacy vault that the key does not open. The
+ *         session is cleared and the status message is set.
+ */
+static bool finish_unlock(VaultState& v)
+{
+    cred_ops::migrate_legacy_rows(v.master_key);
+    std::vector<Credential> creds = cred_ops::load_all(v.master_key);
+
+    if (cred_ops::check_master_key(v.master_key) == cred_ops::KeyCheck::Missing)
+    {
+        // Legacy vault with no verifier yet: a successful decrypt is the only proof of the key.
+        const bool proven = !creds.empty() || !cred_ops::load_deleted(v.master_key).empty();
+        if (!proven && vault_db::count_credentials() > 0)
+        {
+            v.clear_sensitive();
+            vault_db::close();
+            v.set_status("Failed to decrypt credentials (wrong password?).", true);
+            return false;
+        }
+        if (proven)
+            cred_ops::store_master_key_check(v.master_key);
+    }
+
+    v.creds = std::move(creds);
+
+    // auto-purge old trash items
+    {
+        int days = cfg::get_trash_retention_days();
+        if (days > 0) {
+            int64_t cutoff = helpers::now_unix_ms() - (int64_t)days * time_ms::DAY;
+            vault_db::purge_old_tombstones(cutoff);
+        }
+    }
+
+    VaultMarkSaved(v);
+
+    secure_clear_undo_stack(v.undo_stack);
+    v.unlocked = true;
+    v.tofa_pending = false;
+
+    ui::SetRepromptMasterPassword(v.session_password);
+    ui::ResetRepromptLockout();
+
+    g_autosave.last_change_time = ImGui::GetTime();
+    g_autosave.last_save_time = ImGui::GetTime();
+    g_last_activity_time = ImGui::GetTime();
+
+    capture_disk_stamp(v);
+    return true;
+}
+
 static bool load_vault_from_disk(const std::string& path, const std::string& password, VaultState& v)
 {
     v.clear_status();
@@ -1780,10 +1838,8 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         return false;
     }
 
-    std::vector<Credential> creds = cred_ops::load_all(master_key);
-
-    // credentials in DB but none decrypted → wrong password
-    if (creds.empty() && vault_db::count_credentials() > 0)
+    // Reject a wrong password before any credential is decrypted
+    if (cred_ops::check_master_key(master_key) == cred_ops::KeyCheck::Mismatch)
     {
         enc::secure_zero(master_key);
         vault_db::close();
@@ -1796,37 +1852,18 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
     lock_key(v.master_key);
     v.session_password = password;     // kept for backup-restore re-open
     lock_string(v.session_password);
-    v.creds = std::move(creds);
-
-    // auto-purge old trash items
-    {
-        int days = cfg::get_trash_retention_days();
-        if (days > 0) {
-            int64_t cutoff = helpers::now_unix_ms() - (int64_t)days * time_ms::DAY;
-            vault_db::purge_old_tombstones(cutoff);
-        }
-    }
 
     if (twofa_ops::is_enabled())
     {
+        // Credentials stay encrypted until the second factor passes
         v.tofa_pending = true;
         v.set_status("Enter your two-factor authentication code.", false);
         return false;
     }
 
-    VaultMarkSaved(v);
+    if (!finish_unlock(v))
+        return false;
 
-    secure_clear_undo_stack(v.undo_stack);
-    v.unlocked = true;
-
-    ui::SetRepromptMasterPassword(password);
-    ui::ResetRepromptLockout();
-
-    g_autosave.last_change_time = ImGui::GetTime();
-    g_autosave.last_save_time = ImGui::GetTime();
-    g_last_activity_time = ImGui::GetTime();
-
-    capture_disk_stamp(v);
     v.set_status("Vault unlocked.", false);
     return true;
 }
@@ -1845,18 +1882,8 @@ static void complete_2fa_unlock(const std::string& code, VaultState& v)
         return;
     }
 
-    VaultMarkSaved(v);
-
-    secure_clear_undo_stack(v.undo_stack);
-    v.unlocked = true;
-    v.tofa_pending = false;
-
-    ui::SetRepromptMasterPassword(v.session_password);
-    ui::ResetRepromptLockout();
-
-    g_autosave.last_change_time = ImGui::GetTime();
-    g_autosave.last_save_time = ImGui::GetTime();
-    g_last_activity_time = ImGui::GetTime();
+    if (!finish_unlock(v))
+        return;
 
     v.set_status("Vault unlocked.", false);
 }
@@ -1868,6 +1895,13 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
     if (path.empty() || password.empty())
     {
         v.set_status("Path + password required.", true);
+        return false;
+    }
+
+    // Single-factor minimum (NIST SP 800-63B-4). The vault is single-factor whenever 2FA is off.
+    if (helpers::utf8_codepoint_count(password) < helpers::kMinPasswordChars)
+    {
+        v.set_status("Master password must be at least " + std::to_string(helpers::kMinPasswordChars) + " characters.", true);
         return false;
     }
 
@@ -1898,6 +1932,13 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
     }
 
     vault_db::set_meta("kdf_level", high_sec ? "sensitive" : "moderate");  // read back on next open
+
+    if (!cred_ops::store_master_key_check(master_key))
+    {
+        vault_db::close();
+        v.set_status("Failed to store the vault key check.", true);
+        return false;
+    }
 
     v.vault_path = path;
     v.master_key = std::move(master_key);
@@ -2111,6 +2152,7 @@ static void RenderConflictModal()
                 rebuild_tags(g_shell, v.creds);
                 ui::ShowToast("Vault reloaded from disk", ui::ToastType::Success);
             }
+            enc::secure_zero(pw);
             g_vault_conflict = false;
             ImGui::CloseCurrentPopup();
         }
@@ -2891,38 +2933,26 @@ static void render_locked_screen()
                             std::vector<uint8_t> master_key = enc::hex_to_bytes(mk_hex);
                             enc::secure_zero(mk_hex);
 
-                            auto creds = cred_ops::load_all(master_key);
-
                             v.master_key = std::move(master_key);
                             lock_key(v.master_key);
                             v.session_password.clear();  // no password known after recovery
-                            v.creds = std::move(creds);
-                            v.tofa_pending = false;  // recovery bypasses 2FA
-
-                            int days = cfg::get_trash_retention_days();
-                            if (days > 0) {
-                                int64_t cutoff = helpers::now_unix_ms() - (int64_t)days * time_ms::DAY;
-                                vault_db::purge_old_tombstones(cutoff);
-                            }
-
-                            VaultMarkSaved(v);
-                            secure_clear_undo_stack(v.undo_stack);
-                            v.unlocked = true;
-
-                            ui::SetRepromptMasterPassword("");
-                            ui::ResetRepromptLockout();
-
-                            g_autosave.last_change_time = ImGui::GetTime();
-                            g_autosave.last_save_time = ImGui::GetTime();
-                            g_last_activity_time = ImGui::GetTime();
-
-                            rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
-                            ui::ForgetVaultRowState(GetActiveVaultKey());
 
                             s_recovery_input.clear();
                             s_show_recovery = false;
-                            v.set_status("Vault recovered.", false);
-                            ui::ShowToast("Vault unlocked via recovery key", ui::ToastType::Success);
+
+                            // The recovery key replaces the password, not the second factor
+                            if (twofa_ops::is_enabled())
+                            {
+                                v.tofa_pending = true;
+                                v.set_status("Enter your two-factor authentication code.", false);
+                            }
+                            else if (finish_unlock(v))
+                            {
+                                rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
+                                ui::ForgetVaultRowState(GetActiveVaultKey());
+                                v.set_status("Vault recovered.", false);
+                                ui::ShowToast("Vault unlocked via recovery key", ui::ToastType::Success);
+                            }
                         }
                         else
                         {
@@ -3460,6 +3490,7 @@ static void render_unlocked_screen()
 
                 bool can_submit = s_pwm_export_pw1[0] != '\0';
                 bool pw_match = (strcmp(s_pwm_export_pw1, s_pwm_export_pw2) == 0);
+                bool pw_long_enough = helpers::utf8_codepoint_count(s_pwm_export_pw1) >= helpers::kMinPasswordChars;
 
                 if (!can_submit) ImGui::BeginDisabled();
                 bool do_export = ImGui::Button("Export", ImVec2(btnW, btnH)) || (submit_shortcut && can_submit);
@@ -3469,6 +3500,8 @@ static void render_unlocked_screen()
                 {
                     if (!pw_match) {
                         s_pwm_export_error = "Passwords do not match.";
+                    } else if (!pw_long_enough) {
+                        s_pwm_export_error = "Use at least " + std::to_string(helpers::kMinPasswordChars) + " characters.";
                     } else {
                         std::string path = PickSaveFilePath_PWM();
                         if (!path.empty())
@@ -3735,6 +3768,7 @@ static void render_unlocked_screen()
 
                 bool can_submit = s_kdbx_export_pw1[0] != '\0';
                 bool pw_match = (strcmp(s_kdbx_export_pw1, s_kdbx_export_pw2) == 0);
+                bool pw_long_enough = helpers::utf8_codepoint_count(s_kdbx_export_pw1) >= helpers::kMinPasswordChars;
 
                 if (!can_submit) ImGui::BeginDisabled();
                 bool do_export = ImGui::Button("Export", ImVec2(btnW, btnH)) || (submit_shortcut && can_submit);
@@ -3744,6 +3778,8 @@ static void render_unlocked_screen()
                 {
                     if (!pw_match) {
                         s_kdbx_export_error = "Passwords do not match.";
+                    } else if (!pw_long_enough) {
+                        s_kdbx_export_error = "Use at least " + std::to_string(helpers::kMinPasswordChars) + " characters.";
                     } else {
                         std::string path = PickSaveFilePath_KDBX();
                         if (!path.empty())
@@ -4489,6 +4525,12 @@ static void render_unlocked_screen()
         uint32_t vk = GetActiveVaultKey();
 
         ui::ForgetVaultRowState(vk);
+
+        // Erasing the tab frees its buffers without zeroing them, so wipe the
+        // key, the password and the plaintext first (auto-lock, tray lock, reprompt lockout)
+        vv.clear_sensitive();
+        secure_clear_credentials(vv.creds);
+        secure_clear_undo_stack(vv.undo_stack);
 
         // Clear re-prompt security state
         ui::SetRepromptMasterPassword("");
