@@ -30,8 +30,9 @@ namespace colors
     // toast backgrounds
     constexpr ImU32 ToastSuccess    = IM_COL32(46, 160, 67, 255);   // green
     constexpr ImU32 ToastError      = IM_COL32(180, 50, 50, 255);   // red
-    constexpr ImU32 ToastInfo       = IM_COL32(56, 132, 196, 255);  // blue
+    constexpr ImU32 ToastInfo       = IM_COL32(72, 74, 82, 255);    // neutral grey (was blue — off-palette)
     constexpr ImU32 ToastDefault    = IM_COL32(60, 60, 60, 255);    // gray
+    constexpr ImU32 ToastDestruct   = IM_COL32(255, 98, 4, 255);    // orange — self-destruct / timed auto-trash
 
     // strength meter
     constexpr ImU32 StrengthStrong  = IM_COL32(76, 195, 100, 255);  // green

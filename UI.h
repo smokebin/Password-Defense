@@ -501,7 +501,7 @@ namespace ui
         ViewMode view_mode
     );
 
-    enum class ToastType { Success, Error, Info };
+    enum class ToastType { Success, Error, Info, Destruct };
 
     void ShowToast(const char* message, ToastType type = ToastType::Success, float duration = 2.5f);
     void RenderToasts();
