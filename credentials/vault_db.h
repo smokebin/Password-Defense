@@ -73,6 +73,10 @@ namespace vault_db {
         int64_t updated_at_ms
     );
 
+    // Swaps the blob only: timestamps and dirty state are left alone. Used for
+    // re-encrypting the same plaintext in a newer format.
+    bool set_credential_blob(const std::string& uuid, const std::vector<uint8_t>& encrypted_blob);
+
     bool soft_delete_credential(const std::string& uuid);
     bool restore_credential(const std::string& uuid);
     bool hard_delete_credential(const std::string& uuid);

@@ -420,6 +420,25 @@ namespace vault_db {
         return ok;
     }
 
+    bool set_credential_blob(const std::string& uuid, const std::vector<uint8_t>& encrypted_blob)
+    {
+        if (!g_db) return false;
+
+        const char* sql = "UPDATE pm_credentials SET encrypted_blob = ? WHERE uuid = ?";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return false;
+        }
+
+        bind_blob(stmt, 1, encrypted_blob);
+        bind_text(stmt, 2, uuid);
+
+        bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+        sqlite3_finalize(stmt);
+        return ok;
+    }
+
     bool soft_delete_credential(const std::string& uuid)
     {
         if (!g_db) return false;
