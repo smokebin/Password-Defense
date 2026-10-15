@@ -1,4 +1,4 @@
-﻿
+
 // application.cpp — ShellState + VaultState wiring, vault I/O, UI tick logic
 
 #ifndef NOMINMAX
@@ -6,12 +6,15 @@
 #endif
 
 #include <windows.h>
+#include <shlobj.h>
 #include <algorithm>
+#include <fstream>
 #include <atomic>
 #include <ctime>
 #include <filesystem>
 #include <string>
 #include <thread>
+#include <mutex>
 #include <vector>
 #include <map>
 #include <unordered_map>
@@ -34,6 +37,12 @@
 #include "tools/save.h"          // Config persistence
 #include "app_internal.h"     // Shared declarations for split TUs
 #include "theme_colors.h"
+
+// This TU assumes offline semantics (e.g. trash purge ignores sync state). The
+// sync build must not compile it as-is; see purge_trash_older_than in vault_db.h.
+#ifndef PD_OFFLINE_BUILD
+#error "application.cpp is offline-only: define PD_OFFLINE_BUILD (set in program.vcxproj)"
+#endif
 
 // serialize_creds_json / deserialize_creds_json moved to app_import_export.cpp
 
@@ -159,6 +168,33 @@ struct VaultState
     std::vector<Credential> creds;
     std::unordered_map<std::string, Credential> saved_snapshot; // keyed by uuid
 
+    // Explicit record of saved rows the user removed from memory this session
+    // without a DB action (undo of an add). Save hard-deletes ONLY these; any
+    // other live row missing from memory (undecryptable, unparseable, newer
+    // schema, added by another device) is left untouched.
+    std::unordered_set<std::string> user_removed_uuids;
+
+    // Rows the user permanently deleted from Trash this session. Kept for the whole
+    // session (not reset on reload) so undo can never write one back.
+    std::unordered_set<std::string> purged_uuids;
+
+    // Live rows on disk that didn't make it into memory at load (decrypt/parse failed).
+    int unreadable_count = 0;
+
+    // Trashed rows that don't decrypt/parse with this key. Empty Trash and the
+    // retention purge both skip them, so they'd otherwise be invisible forever.
+    int unreadable_trash_count = 0;
+
+    // Replace creds with a fresh view of the DB. Resets the removal record, since
+    // memory and disk now agree.
+    void set_creds_from_db(std::vector<Credential> c)
+    {
+        creds = std::move(c);
+        user_removed_uuids.clear();
+        unreadable_count = (std::max)(0, vault_db::count_credentials() - (int)creds.size());
+        unreadable_trash_count = cred_ops::count_unreadable_trashed(master_key);
+    }
+
     Credential  add_buf{};
     Credential  edit_buf{};
 
@@ -227,6 +263,11 @@ struct VaultState
         for (auto& [uuid, c] : saved_snapshot)
             secure_clear_credential(c);
         saved_snapshot.clear();
+
+        user_removed_uuids.clear();
+        purged_uuids.clear();
+        unreadable_count = 0;
+        unreadable_trash_count = 0;
 
         unlocked = false;
         tofa_pending = false;
@@ -569,35 +610,56 @@ static void ResetScreen(ui::ShellState& shell, ui::Screen next)
 }
 
 
+// folder containing the exe, read as UTF-16 (GetModuleFileNameA mangles non-ASCII)
+static std::filesystem::path exe_dir_path()
+{
+    wchar_t buf[32768];
+    const DWORD n = GetModuleFileNameW(NULL, buf, (DWORD)(sizeof(buf) / sizeof(buf[0])));
+    return std::filesystem::path(std::wstring(buf, n)).parent_path();
+}
+
 static std::string new_db_path()
 {
-    char exe_path_c[MAX_PATH];
-    GetModuleFileNameA(NULL, exe_path_c, MAX_PATH);
+    const std::filesystem::path exe_parent_path = exe_dir_path();
 
-    std::filesystem::path exe_parent_path = std::filesystem::path(exe_path_c).parent_path();
+    const std::string prefix = "vault-";
 
-    std::string prefix = "vault-";
-    int count = 0;
-
-    for (const auto& entry : std::filesystem::directory_iterator(exe_parent_path))
+    // next index = highest existing vault-<N>.db + 1. The old "count the files" scheme
+    // returned an existing name after a deletion (vault-0 gone, vault-1 present ->
+    // "vault-1.db"), and create would then clobber that vault's salt.
+    int next = 0;
+    std::error_code ec;
+    for (std::filesystem::directory_iterator it(exe_parent_path, ec), end; !ec && it != end; it.increment(ec))
     {
-        if (!entry.is_regular_file()) continue;
-        const auto name = entry.path().filename().string();
-        if (name.rfind(prefix, 0) == 0 && entry.path().extension() == ".db")
-            ++count;
+        std::error_code fe;
+        if (!it->is_regular_file(fe)) continue;
+        const std::string name = helpers::PathToU8(it->path().filename());
+        if (name.rfind(prefix, 0) != 0 || it->path().extension() != ".db") continue;
+
+        const std::string mid = name.substr(prefix.size(), name.size() - prefix.size() - 3);
+        if (mid.empty() || mid.size() > 6) continue;
+        if (!std::all_of(mid.begin(), mid.end(), [](char ch) { return ch >= '0' && ch <= '9'; })) continue;
+        next = (std::max)(next, std::stoi(mid) + 1);
     }
 
-    return (exe_parent_path / ("vault-" + std::to_string(count) + ".db")).string();
+    // belt and braces: never hand out a name that's taken, including stale sidecars
+    auto taken = [&](int n) {
+        const std::string p = helpers::PathToU8(exe_parent_path / (prefix + std::to_string(n) + ".db"));
+        std::error_code e;
+        return std::filesystem::exists(helpers::U8Path(p), e)
+            || std::filesystem::exists(helpers::U8Path(p + "-wal"), e)
+            || std::filesystem::exists(helpers::U8Path(p + "-shm"), e);
+    };
+    while (taken(next)) ++next;
+
+    return helpers::PathToU8(exe_parent_path / (prefix + std::to_string(next) + ".db"));
 }
 
 static std::vector<std::string> list_vaults_next_to_exe()
 {
     std::vector<std::string> vaults;
 
-    char exe_path_c[MAX_PATH];
-    GetModuleFileNameA(NULL, exe_path_c, MAX_PATH);
-
-    std::filesystem::path exe_parent_path = std::filesystem::path(exe_path_c).parent_path();
+    const std::filesystem::path exe_parent_path = exe_dir_path();
 
     try
     {
@@ -606,7 +668,7 @@ static std::vector<std::string> list_vaults_next_to_exe()
             if (!entry.is_regular_file()) continue;
             if (entry.path().extension() == ".db")
             {
-                vaults.push_back(entry.path().string());
+                vaults.push_back(helpers::PathToU8(entry.path()));
             }
         }
     }
@@ -637,7 +699,7 @@ static std::string vault_group_label(const std::string& vault_path,
                                      const std::filesystem::path& exe_dir)
 {
     namespace fs = std::filesystem;
-    fs::path p(vault_path);
+    fs::path p = helpers::U8Path(vault_path);
     fs::path parent = p.parent_path();
 
     // equivalent() handles symlinks/relative paths; string fallback for missing files
@@ -645,13 +707,13 @@ static std::string vault_group_label(const std::string& vault_path,
     if (fs::exists(parent, ec) && fs::exists(exe_dir, ec) &&
         fs::equivalent(parent, exe_dir, ec))
         return "BESIDE APP";
-    if (norm_vault_path(parent.string()) == norm_vault_path(exe_dir.string()))
+    if (norm_vault_path(helpers::PathToU8(parent)) == norm_vault_path(helpers::PathToU8(exe_dir)))
         return "BESIDE APP";
 
     // known providers first — Dropbox\Backup\ → DROPBOX, not BACKUP
     for (const auto& comp : parent)
     {
-        std::string c = comp.string();
+        std::string c = helpers::PathToU8(comp);
         std::string low; low.reserve(c.size());
         for (char ch : c) low += char((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
 
@@ -669,7 +731,7 @@ static std::string vault_group_label(const std::string& vault_path,
     // generic-drive heuristics — second pass so known providers win
     for (const auto& comp : parent)
     {
-        std::string c = comp.string();
+        std::string c = helpers::PathToU8(comp);
         std::string low; low.reserve(c.size());
         for (char ch : c) low += char((ch >= 'A' && ch <= 'Z') ? ch + 32 : ch);
 
@@ -679,7 +741,7 @@ static std::string vault_group_label(const std::string& vault_path,
         if (low == "vault" || low == "vaults")                      return "VAULTS";
     }
 
-    return parent.string();
+    return helpers::PathToU8(parent);
 }
 
 static int vault_group_priority(const std::string& label)
@@ -708,12 +770,12 @@ static std::string vault_path_hint(const std::string& vault_path,
                                    const std::string& group_label)
 {
     namespace fs = std::filesystem;
-    fs::path p(vault_path);
+    fs::path p = helpers::U8Path(vault_path);
     fs::path parent = p.parent_path();
 
     if (group_label == "BESIDE APP") return "";
 
-    if (norm_vault_path(group_label) == norm_vault_path(parent.string())) return "";
+    if (norm_vault_path(group_label) == norm_vault_path(helpers::PathToU8(parent))) return "";
 
     auto matches = [](const std::string& low, const std::string& lbl) -> bool {
         if (lbl == "DROPBOX")      return low == "dropbox";
@@ -732,7 +794,7 @@ static std::string vault_path_hint(const std::string& vault_path,
     };
 
     std::vector<std::string> components;
-    for (const auto& c : parent) components.push_back(c.string());
+    for (const auto& c : parent) components.push_back(helpers::PathToU8(c));
 
     int match_idx = -1;
     for (int i = 0; i < (int)components.size(); ++i)
@@ -753,7 +815,11 @@ static std::string vault_path_hint(const std::string& vault_path,
 
     constexpr size_t kMaxHintLen = 28;
     if (hint.size() > kMaxHintLen)
-        hint = "…" + hint.substr(hint.size() - (kMaxHintLen - 1));
+    {
+        size_t cut = hint.size() - (kMaxHintLen - 1);
+        while (cut < hint.size() && ((unsigned char)hint[cut] & 0xC0) == 0x80) ++cut;  // UTF-8 boundary
+        hint = "…" + hint.substr(cut);
+    }
     return hint;
 }
 
@@ -787,6 +853,8 @@ static std::string BasenameNoExt(const std::string& path)
 static void CreatePreOpBackup(const VaultState& v, const char* tag)
 {
     if (v.vault_path.empty()) return;
+    if (!cfg::get_auto_backup()) return;
+    if (tag && strcmp(tag, "EXPIRY") == 0) return;
 
     std::string dir = helpers::GetDefaultBackupDir();
 
@@ -800,7 +868,7 @@ static void CreatePreOpBackup(const VaultState& v, const char* tag)
         dir + "\\" + base + "_PRE-" + tag + "_" + ts + ".lbdb";
 
     helpers::CopyFileAtomic(v.vault_path, dst);
-    helpers::EnforceBackupRetention(dir, 20);
+    helpers::EnforceBackupRetentionForVault(v.vault_path, (size_t)cfg::get_backup_keep_count());
     g_backups_dirty = true;
 }
 
@@ -856,6 +924,24 @@ static void HandleNewDB()
 {
     std::string path = PickSaveFilePath_DB();
     if (path.empty()) return;
+
+    // Never overwrite: an existing vault is offered as "open instead", anything else
+    // is refused. (The save dialog no longer has an overwrite prompt.)
+    {
+        std::error_code ec;
+        if (std::filesystem::exists(helpers::U8Path(path), ec))
+        {
+            if (!vault_db::looks_like_vault(path))
+            {
+                ui::ShowToast("A file that isn't a vault already exists there", ui::ToastType::Error);
+                return;
+            }
+            if (MessageBoxA(GetActiveWindow(), "A vault already exists there.\n\nOpen it instead?",
+                            "Password Defense", MB_YESNO | MB_ICONQUESTION) != IDYES)
+                return;
+        }
+    }
+
     cfg::add_recent_vault(path);
 
     int existing = FindTabByPath(path);
@@ -916,8 +1002,12 @@ static void VaultMarkSaved(VaultState& v)
 static void VaultMarkChanged(VaultState& v, const char* preTagForBackup)
 {
     // first edit after a clean save — snapshot before anything is changed
+    // Expiry moves creds to trash without snapshotting the expiring secrets to a backup file
     if (!v.dirty && v.unlocked && !v.vault_path.empty())
-        CreatePreOpBackup(v, preTagForBackup ? preTagForBackup : "EDIT");
+    {
+        if (!preTagForBackup || strcmp(preTagForBackup, "EXPIRY") != 0)
+            CreatePreOpBackup(v, preTagForBackup ? preTagForBackup : "EDIT");
+    }
 
     VaultRecomputeDirty(v);
 
@@ -981,11 +1071,36 @@ void ReloadVaultCredentials()
 {
     VaultState& v = ActiveVault();
     if (v.master_key.empty()) return;
-    v.creds = cred_ops::load_all(v.master_key);
+    v.set_creds_from_db(cred_ops::load_all(v.master_key));
     VaultMarkSaved(v);
     rebuild_groups(g_shell, v.creds);
     rebuild_tags(g_shell, v.creds);
     ui::ForgetVaultRowState(GetActiveVaultKey());
+}
+
+// Trash UI hard-deleted this row. Record it so an undo that brings the entry back
+// into memory can't write it to disk again.
+void NotePermanentlyDeleted(const std::string& uuid)
+{
+    if (uuid.empty()) return;
+    VaultState& v = ActiveVault();
+    v.purged_uuids.insert(uuid);
+    v.user_removed_uuids.erase(uuid);
+}
+
+static bool save_vault_to_disk(VaultState& v);
+static bool restore_recovery_snapshot_if_newer(VaultState& v);
+
+// Before a DB operation that is followed by a reload from disk (trash restore,
+// import): write pending memory changes first, so the reload can't discard unsaved
+// edits or an unsaved removal (which would resurrect the entry). False = save failed;
+// the caller must not proceed.
+bool FlushVaultBeforeDbOp()
+{
+    VaultState& v = ActiveVault();
+    if (!v.unlocked) return false;
+    if (!v.is_dirty() && v.user_removed_uuids.empty()) return true;
+    return save_vault_to_disk(v);
 }
 
 static void render_tag_editor(float width)
@@ -1719,9 +1834,9 @@ static void capture_disk_stamp(VaultState& v)
     v.last_disk_size = 0;
     if (v.vault_path.empty() || v.vault_path == "NONE") return;
     std::error_code ec;
-    auto mt = std::filesystem::last_write_time(v.vault_path, ec);
+    auto mt = std::filesystem::last_write_time(helpers::U8Path(v.vault_path), ec);
     if (ec) return;
-    auto sz = std::filesystem::file_size(v.vault_path, ec);
+    auto sz = std::filesystem::file_size(helpers::U8Path(v.vault_path), ec);
     if (ec) return;
     v.last_disk_mtime = mt;
     v.last_disk_size = (uintmax_t)sz;
@@ -1733,11 +1848,122 @@ static bool disk_stamp_changed(const VaultState& v)
     if (v.last_disk_size == 0) return false;   // never stamped — don't false-alarm
     if (v.vault_path.empty() || v.vault_path == "NONE") return false;
     std::error_code ec;
-    auto mt = std::filesystem::last_write_time(v.vault_path, ec);
+    auto mt = std::filesystem::last_write_time(helpers::U8Path(v.vault_path), ec);
     if (ec) return false;
-    auto sz = std::filesystem::file_size(v.vault_path, ec);
+    auto sz = std::filesystem::file_size(helpers::U8Path(v.vault_path), ec);
     if (ec) return false;
     return mt != v.last_disk_mtime || (uintmax_t)sz != v.last_disk_size;
+}
+
+// Final unlock status. If some live rows couldn't be decrypted/parsed, say so and
+// say what to do: they're untouched on disk (save only hard-deletes rows the user
+// removed this session), backups are raw file copies that still contain them, and
+// exports can't include them. The status line isn't visible once unlocked, so the
+// guidance is shown in a dialog.
+static void set_unlocked_status(VaultState& v, bool via_recovery = false)
+{
+    const char* ok_msg = via_recovery ? "Vault recovered." : "Vault unlocked.";
+    if (v.unreadable_count <= 0)
+    {
+        v.set_status(ok_msg, false);
+        return;
+    }
+    const int n = v.unreadable_count;
+    const bool one = (n == 1);
+
+    char status[160];
+    snprintf(status, sizeof(status), "%s %d entr%s couldn't be decrypted (kept on disk).",
+             ok_msg, n, one ? "y" : "ies");
+    v.set_status(status, true);
+
+    char msg[1024];
+    snprintf(msg, sizeof(msg),
+        "%d entr%s in this vault couldn't be decrypted or read.\n\n"
+        "%s kept on disk unchanged: saving will not delete %s, and automatic "
+        "backups (full file copies) still contain %s.\n\n"
+        "What to do next:\n"
+        "  - Restore an earlier backup: Settings > Backup > Restore.\n"
+        "%s"
+        "  - Don't rely on exports (CSV/PWM/KDBX) until this is resolved; "
+        "they can't include %s.",
+        n, one ? "y" : "ies",
+        one ? "It's" : "They're", one ? "it" : "them", one ? "it" : "them",
+        via_recovery ? ""
+                     : "  - If this vault may have been saved under a different password, "
+                       "lock and unlock with your recovery key instead.\n",
+        one ? "it" : "them");
+    MessageBoxA(GetActiveWindow(), msg, "Password Defense - unreadable entries",
+                MB_OK | MB_ICONWARNING);
+}
+
+// Persistent (every frame while unlocked) notice for rows that are in the file but
+// not in the app: unreadable live entries and unreadable trashed entries. Nothing in
+// the app removes them (save, Empty Trash and the retention purge all skip them),
+// so without this they'd be invisible.
+static void render_unreadable_banner(const VaultState& v)
+{
+    if (!v.unlocked) return;
+    const int live_n = (std::max)(0, v.unreadable_count);
+    const int trash_n = (std::max)(0, v.unreadable_trash_count);
+    const int n = live_n + trash_n;
+    if (n <= 0) return;
+
+    char text[192];
+    if (trash_n == 0)
+        snprintf(text, sizeof(text), "%d unreadable entr%s remain%s in this vault",
+                 n, n == 1 ? "y" : "ies", n == 1 ? "s" : "");
+    else if (live_n == 0)
+        snprintf(text, sizeof(text), "%d unreadable entr%s remain%s in this vault (in Trash)",
+                 n, n == 1 ? "y" : "ies", n == 1 ? "s" : "");
+    else
+        snprintf(text, sizeof(text), "%d unreadable entries remain in this vault (%d in Trash)",
+                 n, trash_n);
+
+    const ImVec4 amber(0.95f, 0.65f, 0.20f, 1.0f);
+    ImGui::PushID("##unreadable_banner");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(amber, ICON_MDI_ALERT "  %s", text);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("These rows are kept in the vault file and its backups exactly as they are.\n"
+                          "Saving, Empty Trash and automatic trash cleanup never remove them,\n"
+                          "and exports can't include them.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Details"))
+    {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+            "This vault file contains %d entr%s the app can't decrypt or read with the current key "
+            "(%d active, %d in Trash).\n\n"
+            "They are left untouched: saving, Empty Trash and automatic trash cleanup never "
+            "remove them, and automatic backups still contain them. Exports can't include them.\n\n"
+            "Common causes: entries saved under a different master password, or by a newer "
+            "version of the app.\n\n"
+            "What to do:\n"
+            "  - Lock and unlock with your recovery key, or with an older password.\n"
+            "  - Or restore an earlier backup: Settings > Backup > Restore.",
+            n, n == 1 ? "y" : "ies", live_n, trash_n);
+        MessageBoxA(GetActiveWindow(), msg, "Password Defense - unreadable entries",
+                    MB_OK | MB_ICONWARNING);
+    }
+    ImGui::PopID();
+}
+
+// Exports are built from memory, so rows that couldn't be decrypted can't be in
+// them. Ask BEFORE writing anything, rather than letting the count look complete.
+// True = proceed (nothing missing, or the user accepted an incomplete export).
+static bool ConfirmExportIncomplete(const VaultState& v)
+{
+    if (v.unreadable_count <= 0) return true;
+    const int n = v.unreadable_count;
+    char msg[512];
+    snprintf(msg, sizeof(msg),
+             "%d entr%s can't be exported because %s couldn't be decrypted.\n\n"
+             "The export will be incomplete. %s still in the vault file and its backups.\n\n"
+             "Continue?",
+             n, n == 1 ? "y" : "ies", n == 1 ? "it" : "they",
+             n == 1 ? "It is" : "They are");
+    return MessageBoxA(GetActiveWindow(), msg, "Password Defense - incomplete export",
+                       MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES;
 }
 
 static bool load_vault_from_disk(const std::string& path, const std::string& password, VaultState& v)
@@ -1748,6 +1974,16 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
     {
         v.set_status("Path + password required.", true);
         return false;
+    }
+
+    // init() would silently create an empty database at a missing path
+    {
+        std::error_code ec;
+        if (!std::filesystem::exists(helpers::U8Path(path), ec))
+        {
+            v.set_status("Vault file not found.", true);
+            return false;
+        }
     }
 
     vault_db::close();
@@ -1780,6 +2016,18 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         return false;
     }
 
+    // key-check is the authoritative password test; unlike the credential-decrypt
+    // check below it also works for empty vaults
+    const std::vector<uint8_t> key_check = vault_db::get_key_check();
+    const bool has_key_check = !key_check.empty();
+    if (has_key_check && !enc::verify_key_check(key_check, master_key))
+    {
+        enc::secure_zero(master_key);
+        vault_db::close();
+        v.set_status("Incorrect master password.", true);
+        return false;
+    }
+
     std::vector<Credential> creds = cred_ops::load_all(master_key);
 
     // credentials in DB but none decrypted → wrong password
@@ -1791,21 +2039,56 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
         return false;
     }
 
+    // some (not all) rows failed: they stay on disk untouched (save only hard-deletes
+    // rows the user removed this session). set_creds_from_db records the count and
+    // set_unlocked_status tells the user what to do, once unlock completes.
+
+    bool wrote_on_open = false;
+
+    // legacy vault (pre key-check): stamp one, but only once the password is proven
+    // by decrypting real data. A legacy vault with no live or trashed entries can't
+    // be verified; it gets stamped on its first save with content.
+    if (!has_key_check)
+    {
+        bool verified = !creds.empty();
+        if (!verified && !vault_db::get_deleted_credentials().empty())
+        {
+            if (cred_ops::load_deleted(master_key).empty())
+            {
+                enc::secure_zero(master_key);
+                vault_db::close();
+                v.set_status("Incorrect master password.", true);
+                return false;
+            }
+            verified = true;
+        }
+        if (verified && vault_db::set_key_check(enc::make_key_check(master_key)))
+            wrote_on_open = true;
+    }
+
     v.vault_path = path;
     v.master_key = std::move(master_key);
     lock_key(v.master_key);
     v.session_password = password;     // kept for backup-restore re-open
     lock_string(v.session_password);
-    v.creds = std::move(creds);
+    v.set_creds_from_db(std::move(creds));
 
-    // auto-purge old trash items
+    // auto-purge old trash items: only rows that decrypt and parse with this key.
+    // Unreadable trashed rows are kept regardless of age (this runs before the user
+    // has seen any unreadable-entries warning).
     {
         int days = cfg::get_trash_retention_days();
         if (days > 0) {
             int64_t cutoff = helpers::now_unix_ms() - (int64_t)days * time_ms::DAY;
-            vault_db::purge_old_tombstones(cutoff);
+            if (cred_ops::purge_trash_older_than(v.master_key, cutoff) > 0)
+                wrote_on_open = true;
         }
     }
+
+    // fold open-time writes into the main file before the disk stamp is taken,
+    // so they don't later look like an external change (sync conflict)
+    if (wrote_on_open)
+        vault_db::checkpoint_truncate();
 
     if (twofa_ops::is_enabled())
     {
@@ -1827,7 +2110,8 @@ static bool load_vault_from_disk(const std::string& path, const std::string& pas
     g_last_activity_time = ImGui::GetTime();
 
     capture_disk_stamp(v);
-    v.set_status("Vault unlocked.", false);
+    restore_recovery_snapshot_if_newer(v);
+    set_unlocked_status(v);
     return true;
 }
 
@@ -1850,6 +2134,7 @@ static void complete_2fa_unlock(const std::string& code, VaultState& v)
     secure_clear_undo_stack(v.undo_stack);
     v.unlocked = true;
     v.tofa_pending = false;
+    restore_recovery_snapshot_if_newer(v);
 
     ui::SetRepromptMasterPassword(v.session_password);
     ui::ResetRepromptLockout();
@@ -1858,7 +2143,7 @@ static void complete_2fa_unlock(const std::string& code, VaultState& v)
     g_autosave.last_save_time = ImGui::GetTime();
     g_last_activity_time = ImGui::GetTime();
 
-    v.set_status("Vault unlocked.", false);
+    set_unlocked_status(v);
 }
 
 static bool create_new_vault_on_disk(const std::string& path, const std::string& password, VaultState& v)
@@ -1871,40 +2156,88 @@ static bool create_new_vault_on_disk(const std::string& path, const std::string&
         return false;
     }
 
+    // Never "create" over an existing file: init() opens it in place and the salt
+    // write below would replace its salt, making every existing entry (and its
+    // recovery blob) permanently undecryptable. Stale sidecars are refused too, since
+    // SQLite could replay an old WAL into the new file.
+    {
+        std::error_code ec;
+        for (const char* suffix : { "-wal", "-shm", "-journal" })
+        {
+            if (std::filesystem::exists(helpers::U8Path(path + suffix), ec))
+            {
+                v.set_status("A leftover database file exists at that path. Choose a different name.", true);
+                return false;
+            }
+        }
+    }
+
     vault_db::close();
 
-    if (!vault_db::init(path))
+    // The main file is claimed atomically: CREATE_NEW fails if anything already
+    // exists, so two instances (or any other process) can't both pass a
+    // check-then-open. Only after this succeeds do we own the path.
     {
-        v.set_status("Failed to create vault database.", true);
-        return false;
+        HANDLE h = CreateFileW(helpers::Utf8ToWide(path).c_str(), GENERIC_WRITE, 0,
+                               nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE)
+        {
+            const DWORD err = GetLastError();
+            v.set_status((err == ERROR_FILE_EXISTS || err == ERROR_ALREADY_EXISTS)
+                ? "A file already exists at that path. Choose a different name."
+                : "Couldn't create the vault file (check the folder exists and is writable).", true);
+            return false;   // nothing created, nothing to clean up
+        }
+        CloseHandle(h);
     }
+
+    // From here on, this call created the (empty) main file, and the sidecars didn't
+    // exist beforehand (checked above), so on any failure remove what we made. A
+    // half-built file (salt but no key-check) would otherwise open with any password.
+    // abort_create is never reachable for a path that existed before this call.
+    // copy: path may alias v.vault_path
+    const std::string created_path = path;
+    auto abort_create = [&](const char* msg) {
+        vault_db::close();
+        std::error_code ec;
+        for (const char* suffix : { "", "-wal", "-shm", "-journal" })
+            std::filesystem::remove(helpers::U8Path(created_path + suffix), ec);
+        v.set_status(msg, true);
+        return false;
+    };
+
+    if (!vault_db::init(path))
+        return abort_create("Failed to create vault database.");
 
     std::vector<uint8_t> salt = enc::generate_salt();
 
     if (!vault_db::set_cached_salt(salt))
-    {
-        vault_db::close();
-        v.set_status("Failed to store encryption salt.", true);
-        return false;
-    }
+        return abort_create("Failed to store encryption salt.");
 
     bool high_sec = cfg::get_high_security_kdf();
     std::vector<uint8_t> master_key = enc::derive_master_key(password, salt, high_sec);
     if (master_key.empty())
+        return abort_create("Failed to derive encryption key.");
+
+    // must persist: if it were lost, the next open would derive with the wrong params
+    if (!vault_db::set_meta("kdf_level", high_sec ? "sensitive" : "moderate"))
     {
-        vault_db::close();
-        v.set_status("Failed to derive encryption key.", true);
-        return false;
+        enc::secure_zero(master_key);
+        return abort_create("Failed to store key-derivation settings.");
     }
 
-    vault_db::set_meta("kdf_level", high_sec ? "sensitive" : "moderate");  // read back on next open
+    if (!vault_db::set_key_check(enc::make_key_check(master_key)))
+    {
+        enc::secure_zero(master_key);
+        return abort_create("Failed to store password key-check.");
+    }
 
     v.vault_path = path;
     v.master_key = std::move(master_key);
     lock_key(v.master_key);
     v.session_password = password;
     lock_string(v.session_password);
-    v.creds.clear();
+    v.set_creds_from_db({});
 
     VaultMarkSaved(v);
 
@@ -1987,74 +2320,24 @@ static bool save_vault_to_disk(VaultState& v)
         return false;
     }
 
-    // sync: re-encrypt all in-memory creds (handles adds, updates, deletes uniformly)
-    vault_db::begin_transaction();
-
-    auto existing_rows = vault_db::get_all_credentials();
-    std::unordered_set<std::string> existing_uuids;
-    for (const auto& row : existing_rows)
-        existing_uuids.insert(row.uuid);
-
-    auto deleted_rows = vault_db::get_deleted_credentials();  // needed to detect undo-restored entries
-    std::unordered_set<std::string> soft_deleted_uuids;
-    for (const auto& row : deleted_rows)
-        soft_deleted_uuids.insert(row.uuid);
-
-    std::unordered_set<std::string> memory_uuids;
-
-    bool save_ok = true;
-    for (auto& c : v.creds)
+    // one transaction: inserts, updates, undo-restores, explicit hard-deletes only.
+    // On any failure (incl. COMMIT) it rolls back and un-assigns new uuids, so memory
+    // still matches the unchanged DB and the next save retries cleanly.
+    const auto snap_removed = v.user_removed_uuids;
+    const cred_ops::SaveResult r =
+        cred_ops::save_all(v.creds, v.master_key, snap_removed, v.purged_uuids);
+    if (!r.ok)
     {
-        if (c.uuid.empty())
-        {
-            std::string new_uuid = cred_ops::add(c, v.master_key);
-            if (!new_uuid.empty())
-            {
-                c.uuid = new_uuid;
-                memory_uuids.insert(new_uuid);
-            }
-            else
-            {
-                save_ok = false;
-                break;
-            }
-        }
-        else
-        {
-            if (soft_deleted_uuids.count(c.uuid))
-                vault_db::restore_credential(c.uuid);  // undo brought it back
-
-            memory_uuids.insert(c.uuid);
-            {
-                auto blob = cred_ops::encrypt_cred_public(c, v.master_key, c.uuid);
-                int64_t ts = (c.updated_at_ms != 0) ? c.updated_at_ms : helpers::now_unix_ms();
-                if (blob.empty() || !vault_db::update_credential(c.uuid, blob, ts))
-                {
-                    save_ok = false;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!save_ok)
-    {
-        vault_db::rollback_transaction();
-        v.set_status("Save failed: encryption or database error.", true);
+        v.set_status(r.error, true);
         ui::ShowToast("Save failed", ui::ToastType::Error);
         return false;
     }
 
-    // hard-delete only true orphans (not in memory and not soft-deleted)
-    for (const auto& uuid : existing_uuids)
+    // committed: erase only the snapshotted removals so concurrent deletions are preserved
+    for (const auto& u : snap_removed)
     {
-        if (memory_uuids.find(uuid) == memory_uuids.end())
-        {
-            vault_db::hard_delete_credential(uuid);
-        }
+        v.user_removed_uuids.erase(u);
     }
-
-    vault_db::commit_transaction();
 
     // collapse WAL into .db so the at-rest file is sync-clean and the stamp is accurate
     vault_db::checkpoint_truncate();
@@ -2164,6 +2447,195 @@ static void TickAutosave()
     }
 }
 
+static std::unordered_map<std::string, bool> g_autolock_save_failed_by_vault;
+static std::unordered_map<std::string, std::string> g_autolock_recovery_file_by_vault;
+
+static bool write_recovery_snapshot_file(
+    const std::vector<Credential>& creds,
+    const std::unordered_set<std::string>& user_removed_uuids,
+    const std::vector<uint8_t>& master_key,
+    const std::string& v_key)
+{
+    try {
+        auto rec_dir_w = cfg::get_recovery_directory_path();
+        if (rec_dir_w.empty()) return false;
+        std::filesystem::path rec_dir(rec_dir_w);
+        std::error_code ec;
+        std::filesystem::create_directories(rec_dir, ec);
+
+        int64_t now_ms = helpers::now_unix_ms();
+        std::string filename = "vault_recovery_" + std::to_string(now_ms) + ".rec";
+        std::filesystem::path rec_file = rec_dir / filename;
+
+        nlohmann::json j;
+        nlohmann::json creds_arr = nlohmann::json::array();
+        for (const auto& c : creds) {
+            // Canonical content fields (one source of truth with the DB blob), plus the
+            // uuid + timestamps the snapshot must carry itself — on restore there's no
+            // DB row to read those from.
+            nlohmann::json cj = cred_ops::to_json(c);
+            cj["uuid"]       = c.uuid;
+            cj["created_at"] = c.created_at_ms;
+            cj["updated_at"] = c.updated_at_ms;
+            cj["deleted_at"] = c.deleted_at_ms;
+            creds_arr.push_back(std::move(cj));
+        }
+        j["creds"] = creds_arr;
+        nlohmann::json removed_arr = nlohmann::json::array();
+        for (const auto& u : user_removed_uuids) {
+            removed_arr.push_back(u);
+        }
+        j["user_removed_uuids"] = removed_arr;
+        std::string serialized = j.dump();
+        auto enc_blob = enc::encrypt_credential(serialized, master_key, "recovery_snapshot");
+        if (!enc_blob.empty()) {
+            // PathToU8: bytes_to_file treats its arg as UTF-8 (converts via U8Path);
+            // path::string() would hand it ANSI bytes / throw on a non-ASCII profile path.
+            const std::string rec_file_u8 = helpers::PathToU8(rec_file);
+            if (helpers::bytes_to_file(rec_file_u8.c_str(), enc_blob)) {
+                g_autolock_save_failed_by_vault[v_key] = true;
+                g_autolock_recovery_file_by_vault[v_key] = rec_file_u8;
+                return true;
+            }
+        }
+    }
+    catch (...) {}
+    return false;
+}
+
+static bool restore_recovery_snapshot_if_newer(VaultState& v)
+{
+    if (!v.unlocked || v.master_key.empty()) return false;
+
+    auto rec_dir_w = cfg::get_recovery_directory_path();
+    if (rec_dir_w.empty()) return false;
+    std::filesystem::path rec_dir(rec_dir_w);
+    std::error_code ec;
+    if (!std::filesystem::exists(rec_dir, ec)) return false;
+
+    bool restored_any = false;
+    std::vector<std::filesystem::path> rec_files_to_remove;
+
+    for (const auto& entry : std::filesystem::directory_iterator(rec_dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".rec") continue;
+
+        auto enc_blob = helpers::file_to_vec(helpers::PathToU8(entry.path()));
+        if (enc_blob.empty()) continue;
+
+        std::string plain = enc::decrypt_credential(enc_blob, v.master_key, "recovery_snapshot");
+        if (plain.empty()) continue; // Not this vault's key
+
+        try {
+            auto j = nlohmann::json::parse(plain);
+            nlohmann::json creds_arr;
+            if (j.is_array()) {
+                creds_arr = j;
+            } else if (j.is_object() && j.contains("creds") && j["creds"].is_array()) {
+                creds_arr = j["creds"];
+            } else {
+                continue;
+            }
+
+            for (const auto& it : creds_arr) {
+                std::string u = it.value("uuid", "");
+                if (u.empty()) continue;
+
+                int64_t rec_updated = it.value("updated_at", int64_t(0));
+
+                Credential* existing = nullptr;
+                for (auto& c_item : v.creds) {
+                    if (c_item.uuid == u) {
+                        existing = &c_item;
+                        break;
+                    }
+                }
+
+                if (existing != nullptr) {
+                    // Stale-recovery guard: only overwrite if the snapshot is strictly
+                    // newer than the local row; then it fully replaces the content.
+                    if (rec_updated > existing->updated_at_ms) {
+                        cred_ops::from_json(it, *existing);
+                        existing->uuid = u;
+                        existing->updated_at_ms = rec_updated;
+                        existing->deleted_at_ms = it.value("deleted_at", existing->deleted_at_ms);
+                        // created_at_ms: keep the row's original creation time
+                        restored_any = true;
+                    }
+                } else {
+                    Credential c;
+                    cred_ops::from_json(it, c);
+                    c.uuid = u;
+                    c.created_at_ms = it.value("created_at", helpers::now_unix_ms());
+                    c.updated_at_ms = rec_updated;
+                    c.deleted_at_ms = it.value("deleted_at", int64_t(0));  // trashed stays trashed
+                    v.creds.push_back(std::move(c));
+                    restored_any = true;
+                }
+            }
+
+            if (j.is_object() && j.contains("user_removed_uuids") && j["user_removed_uuids"].is_array()) {
+                for (const auto& u_val : j["user_removed_uuids"]) {
+                    if (u_val.is_string()) {
+                        v.user_removed_uuids.insert(u_val.get<std::string>());
+                    }
+                }
+            }
+
+            rec_files_to_remove.push_back(entry.path());
+        }
+        catch (...) {}
+    }
+
+    std::string v_key = v.vault_path.empty() ? "default" : v.vault_path;
+    if (restored_any) {
+        v.dirty = true;
+        // Delete the .rec ONLY after the restored state is committed!
+        bool committed = save_vault_to_disk(v);
+        if (committed) {
+            for (const auto& p : rec_files_to_remove) {
+                std::filesystem::remove(p, ec);
+            }
+            g_autolock_save_failed_by_vault[v_key] = false;
+        }
+    } else if (!rec_files_to_remove.empty()) {
+        for (const auto& p : rec_files_to_remove) {
+            std::filesystem::remove(p, ec);
+        }
+        g_autolock_save_failed_by_vault[v_key] = false;
+    }
+
+    return restored_any;
+}
+
+static bool safe_autolock_save(VaultState& vv)
+{
+    std::string v_key = vv.vault_path.empty() ? "default" : vv.vault_path;
+    if (!vv.is_dirty()) {
+        return true;
+    }
+
+    // Synchronous save.
+    if (save_vault_to_disk(vv)) {
+        g_autolock_save_failed_by_vault[v_key] = false;
+        return true;
+    }
+
+    // Save failed: write an encrypted recovery snapshot synchronously so this
+    // session's edits survive to the next unlock.
+    //
+    // This used to spin up a detached worker that slept 150ms and retried the
+    // save. That retry ran cred_ops::save_all on the shared global SQLite handle
+    // (g_db) off the main thread, racing vault_db::close() from the lock/overwrite
+    // paths — a use-after-free on g_db (and a data race on the status maps, which
+    // the render thread reads every frame). The retry bought little: the snapshot
+    // is the actual safety net, and writing it here on the calling thread keeps
+    // every g_db and map access single-threaded.
+    write_recovery_snapshot_file(vv.creds, vv.user_removed_uuids, vv.master_key, v_key);
+    g_autolock_save_failed_by_vault[v_key] = true;
+    return false;
+}
+
 static void TickAutoLock()
 {
     VaultState& v = ActiveVault();
@@ -2206,6 +2678,8 @@ static void TickAutoLock()
 
     if (now - g_last_activity_time >= (double)timeout)
     {
+        VaultState& vv = ActiveVault();
+        safe_autolock_save(vv);
         g_shell.footer_close_anyway = true;
         g_last_activity_time = now;  // reset to prevent repeated triggers
         ui::ShowToast("Vault locked due to inactivity", ui::ToastType::Info);
@@ -2243,14 +2717,14 @@ static void TickCredentialExpiry()
                 cred_ops::remove(c.uuid);
             trashed_ids.push_back(c.id);
             char toast[256];
-            snprintf(toast, sizeof(toast), "Timed credential trashed: %s", c.title.c_str());
+            snprintf(toast, sizeof(toast), "Timed credential trashed: %s", DisplayTitle(c.title));
             ui::ShowToast(toast, ui::ToastType::Destruct);
         } else {
             // flag only: negate expires_at_ms to mark as expired without trashing
             c.expires_at_ms = -c.expires_at_ms;
             c.updated_at_ms = now_ms;
             char toast[256];
-            snprintf(toast, sizeof(toast), "Credential expired: %s", c.title.c_str());
+            snprintf(toast, sizeof(toast), "Credential expired: %s", DisplayTitle(c.title));
             ui::ShowToast(toast, ui::ToastType::Error);
         }
     }
@@ -2294,7 +2768,17 @@ static void do_undo(VaultState& v)
     const std::string snap = v.undo_stack.back();
     v.undo_stack.pop_back();
 
+    // record which saved rows this undo drops from memory (e.g. undoing an add that
+    // was already saved). Save hard-deletes only UUIDs in this set. Entries the user
+    // permanently deleted from Trash are dropped from the restored snapshot.
+    std::vector<Credential> before = v.creds;
+
     v.apply_snapshot_json(snap);
+    cred_ops::reconcile_after_undo(before, v.creds, v.user_removed_uuids, v.purged_uuids);
+
+    for (auto& c : before)
+        secure_clear_credential(c);
+    before.clear();
 
     ui::ForgetVaultRowState(GetActiveVaultKey());
 
@@ -2392,6 +2876,16 @@ static void render_locked_screen()
     ImGui::Dummy(ImVec2(0, 50));
     render::BeginSoftContainer(20.0f, 10.0f);
 
+    {
+        std::string cur_v_key = v.vault_path.empty() ? "default" : v.vault_path;
+        if (g_autolock_save_failed_by_vault[cur_v_key]) {
+            ImGui::PushStyleColor(ImGuiCol_Text, colors::Orange);
+            ImGui::TextWrapped("Warning: Auto-lock save failed. An encrypted recovery snapshot was created and will be restored when unlocked.");
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0, 6));
+        }
+    }
+
     if (s_cached_vaults.empty())
         s_cached_vaults = build_vault_list();
 
@@ -2418,9 +2912,45 @@ static void render_locked_screen()
         }
     }
 
+    // add to recents, make it the active path and select it in the list (no unlock)
+    auto select_existing_vault = [&](const std::string& path)
+    {
+        cfg::add_recent_vault(path);
+        v.vault_path = path;
+        s_cached_vaults = build_vault_list();
+        s_selected_vault_idx = -1;
+        for (int i = 0; i < (int)s_cached_vaults.size(); i++)
+            if (s_cached_vaults[i] == path) { s_selected_vault_idx = i; break; }
+    };
+
     auto create_vault_at = [&](const std::string& path)
     {
         if (path.empty()) return;
+
+        // Never overwrite. If something is already there, offer to open it (if it's a
+        // vault) or refuse; there is deliberately no replace option.
+        std::error_code ec;
+        if (std::filesystem::exists(helpers::U8Path(path), ec))
+        {
+            if (vault_db::looks_like_vault(path))
+            {
+                if (MessageBoxA(GetActiveWindow(), "A vault already exists there.\n\nOpen it instead?",
+                                "Password Defense", MB_YESNO | MB_ICONQUESTION) == IDYES)
+                {
+                    select_existing_vault(path);
+                    // the typed password was meant for a new vault; don't reuse it here
+                    sodium_memzero(s_pw[ti].data(), s_pw[ti].size());
+                    s_pw[ti].clear();
+                    v.set_status("Enter this vault's password to unlock it.", false);
+                }
+            }
+            else
+            {
+                v.set_status("A file that isn't a vault already exists there. Choose a different name.", true);
+            }
+            return;
+        }
+
         if (s_pw[ti].empty()) { v.set_status("Enter a password to create a new vault.", true); return; }
         v.vault_path = path;
         create_new_vault_on_disk(v.vault_path, s_pw[ti], v);
@@ -2475,14 +3005,7 @@ static void render_locked_screen()
         {
             std::string picked = PickOpenFilePath_DB();
             if (!picked.empty())
-            {
-                cfg::add_recent_vault(picked);
-                v.vault_path = picked;
-                s_cached_vaults = build_vault_list();
-                s_selected_vault_idx = -1;
-                for (int i = 0; i < (int)s_cached_vaults.size(); i++)
-                    if (s_cached_vaults[i] == picked) { s_selected_vault_idx = i; break; }
-            }
+                select_existing_vault(picked);
         }
         if (ImGui::IsItemHovered()) ui::SetTooltipPadded("Open a vault from a folder (e.g. your synced drive)");
 
@@ -2573,9 +3096,7 @@ static void render_locked_screen()
         for (const auto& p : cfg::get_recent_vaults())
             recent_set.insert(norm_vault_path(p));
 
-        char exe_path_c[MAX_PATH];
-        GetModuleFileNameA(nullptr, exe_path_c, MAX_PATH);
-        std::filesystem::path exe_dir = std::filesystem::path(exe_path_c).parent_path();
+        const std::filesystem::path exe_dir = exe_dir_path();
 
         struct VaultGroup { std::string label; std::vector<int> indices; };
         std::vector<VaultGroup> groups;
@@ -2896,13 +3417,14 @@ static void render_locked_screen()
                             v.master_key = std::move(master_key);
                             lock_key(v.master_key);
                             v.session_password.clear();  // no password known after recovery
-                            v.creds = std::move(creds);
+                            v.set_creds_from_db(std::move(creds));
                             v.tofa_pending = false;  // recovery bypasses 2FA
 
+                            // same rule as password unlock: readable rows only
                             int days = cfg::get_trash_retention_days();
                             if (days > 0) {
                                 int64_t cutoff = helpers::now_unix_ms() - (int64_t)days * time_ms::DAY;
-                                vault_db::purge_old_tombstones(cutoff);
+                                cred_ops::purge_trash_older_than(v.master_key, cutoff);
                             }
 
                             VaultMarkSaved(v);
@@ -2921,7 +3443,8 @@ static void render_locked_screen()
 
                             s_recovery_input.clear();
                             s_show_recovery = false;
-                            v.set_status("Vault recovered.", false);
+                            restore_recovery_snapshot_if_newer(v);
+                            set_unlocked_status(v, /*via_recovery=*/true);
                             ui::ShowToast("Vault unlocked via recovery key", ui::ToastType::Success);
                         }
                         else
@@ -3096,6 +3619,7 @@ static void render_unlocked_screen()
     {
         ui::BeginShellHeader();
         ui::DrawListControlsRow(g_shell, activeVaultKey);
+        render_unreadable_banner(v);
         ui::EndShellHeader();
         //ImGui::Dummy(ImVec2(0, 4));
     }
@@ -3307,7 +3831,7 @@ static void render_unlocked_screen()
     if (g_shell.export_csv_clicked)
     {
         g_shell.export_csv_clicked = false;
-        std::string path = PickSaveFilePath_CSV();
+        std::string path = ConfirmExportIncomplete(v) ? PickSaveFilePath_CSV() : std::string();
         if (!path.empty())
         {
             auto csv_quote = [](const std::string& s) -> std::string {
@@ -3386,11 +3910,14 @@ static void render_unlocked_screen()
         if (g_shell.export_pwm_clicked)
         {
             g_shell.export_pwm_clicked = false;
-            s_pwm_export_modal = true;
-            sodium_memzero(s_pwm_export_pw1, sizeof(s_pwm_export_pw1));
-            sodium_memzero(s_pwm_export_pw2, sizeof(s_pwm_export_pw2));
-            s_pwm_export_error.clear();
-            ImGui::OpenPopup("Export PWM###pwm_export_modal");
+            if (ConfirmExportIncomplete(v))
+            {
+                s_pwm_export_modal = true;
+                sodium_memzero(s_pwm_export_pw1, sizeof(s_pwm_export_pw1));
+                sodium_memzero(s_pwm_export_pw2, sizeof(s_pwm_export_pw2));
+                s_pwm_export_error.clear();
+                ImGui::OpenPopup("Export PWM###pwm_export_modal");
+            }
         }
 
         if (s_pwm_export_modal)
@@ -3592,17 +4119,20 @@ static void render_unlocked_screen()
                     if (result.ok)
                     {
                         // UUIDs preserved: same-UUID+newer overwrites, same-UUID+older skips,
-                        // new UUID inserts — re-importing your own export is a no-op
-                        int inserted = 0, updated = 0, skipped = 0;
-                        std::string import_err;
-                        if (cred_ops::import_credentials(result.creds, v.master_key,
-                                                         &inserted, &updated, &skipped, &import_err))
-                        {
-                            v.creds = cred_ops::load_all(v.master_key);
+                        // new UUID inserts — re-importing your own export is a no-op.
+                        // import_flow saves pending changes first; if that save fails it
+                        // imports nothing and doesn't reload, so unsaved edits stay in memory.
+                        const auto fr = cred_ops::import_flow(FlushVaultBeforeDbOp, result.creds, v.master_key, [&] {
+                            // re-imported on purpose: no longer a "permanently deleted" entry
+                            for (const auto& c : result.creds)
+                                if (!c.uuid.empty()) v.purged_uuids.erase(c.uuid);
+                            v.set_creds_from_db(cred_ops::load_all(v.master_key));
                             rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
                             ui::ForgetVaultRowState(GetActiveVaultKey());
                             VaultMarkChanged(v, "IMPORT");
-
+                        });
+                        if (fr.ok)
+                        {
                             std::string msg = "Imported ";
                             bool any = false;
                             auto append_bucket = [&](int n, const char* label) {
@@ -3611,9 +4141,9 @@ static void render_unlocked_screen()
                                 msg += std::to_string(n) + " " + label;
                                 any = true;
                             };
-                            append_bucket(inserted, "new");
-                            append_bucket(updated,  "updated");
-                            append_bucket(skipped,  "already current");
+                            append_bucket(fr.inserted, "new");
+                            append_bucket(fr.updated,  "updated");
+                            append_bucket(fr.skipped,  "already current");
                             if (!any) msg += "0 credentials";
 
                             ui::ShowToast(msg.c_str(), ui::ToastType::Success);
@@ -3625,9 +4155,9 @@ static void render_unlocked_screen()
                         }
                         else
                         {
-                            s_pwm_import_error = import_err.empty()
-                                ? std::string("Database error during import")
-                                : ("Database error during import: " + import_err);
+                            s_pwm_import_error = fr.error;
+                            if (fr.flush_failed)
+                                ui::ShowToast("Import cancelled: couldn't save pending changes", ui::ToastType::Error);
                         }
                     }
                     else
@@ -3661,11 +4191,14 @@ static void render_unlocked_screen()
         if (g_shell.export_kdbx_clicked)
         {
             g_shell.export_kdbx_clicked = false;
-            s_kdbx_export_modal = true;
-            sodium_memzero(s_kdbx_export_pw1, sizeof(s_kdbx_export_pw1));
-            sodium_memzero(s_kdbx_export_pw2, sizeof(s_kdbx_export_pw2));
-            s_kdbx_export_error.clear();
-            ImGui::OpenPopup("Export KDBX###kdbx_export_modal");
+            if (ConfirmExportIncomplete(v))
+            {
+                s_kdbx_export_modal = true;
+                sodium_memzero(s_kdbx_export_pw1, sizeof(s_kdbx_export_pw1));
+                sodium_memzero(s_kdbx_export_pw2, sizeof(s_kdbx_export_pw2));
+                s_kdbx_export_error.clear();
+                ImGui::OpenPopup("Export KDBX###kdbx_export_modal");
+            }
         }
 
         if (s_kdbx_export_modal)
@@ -3902,13 +4435,14 @@ static void render_unlocked_screen()
                     for (auto& c : s_csv_result.creds)  // clear UUIDs so fresh ones are generated
                         c.uuid.clear();
 
-                    if (cred_ops::import_credentials(s_csv_result.creds, v.master_key))
-                    {
-                        v.creds = cred_ops::load_all(v.master_key);
+                    const auto fr = cred_ops::import_flow(FlushVaultBeforeDbOp, s_csv_result.creds, v.master_key, [&] {
+                        v.set_creds_from_db(cred_ops::load_all(v.master_key));
                         rebuild_groups(g_shell, v.creds); rebuild_tags(g_shell, v.creds);
                         ui::ForgetVaultRowState(GetActiveVaultKey());
                         VaultMarkChanged(v, "IMPORT");
-
+                    });
+                    if (fr.ok)
+                    {
                         char msg[128];
                         snprintf(msg, sizeof(msg), "Imported %d credentials from %s",
                             (int)s_csv_result.creds.size(), CsvFormatName(s_csv_result.format));
@@ -3924,7 +4458,9 @@ static void render_unlocked_screen()
                     }
                     else
                     {
-                        s_csv_import_error = "Database error during import";
+                        s_csv_import_error = fr.error;
+                        if (fr.flush_failed)
+                            ui::ShowToast("Import cancelled: couldn't save pending changes", ui::ToastType::Error);
                     }
                 }
 
@@ -4445,13 +4981,28 @@ static void render_unlocked_screen()
     render::SetMinimizeToTray(g_shell.minimize_to_tray);
 
     if (render::ConsumeTrayLock())
+    {
+        safe_autolock_save(ActiveVault());
         g_shell.footer_close_anyway = true;
+    }
 
     if (g_shell.goto_locked_clicked)
     {
-        g_shell.goto_locked_clicked = false;
-
         VaultState& vv = ActiveVault();
+
+        if (vv.is_dirty())
+        {
+            if (!save_vault_to_disk(vv))
+            {
+                // Abort lock on save failure so user doesn't lose changes!
+                g_shell.goto_locked_clicked = false;
+                vv.set_status("Lock aborted: failed to save pending changes to disk.", true);
+                ui::ShowToast("Lock aborted: save failed", ui::ToastType::Error);
+                return;
+            }
+        }
+
+        g_shell.goto_locked_clicked = false;
 
         vault_db::close();
         vv.clear_sensitive();

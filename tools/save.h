@@ -24,6 +24,8 @@ namespace cfg {
 	int  get_self_destruct_mode();
 	void set_self_destruct_mode(int mode);
 	void register_self_destruct_handler();
+	std::wstring get_recovery_directory_path();
+
 
 	int get_theme();  // 0=dark, 1=light
 	void set_theme(int theme);

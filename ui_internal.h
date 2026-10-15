@@ -11,6 +11,8 @@
 // Defined in application.cpp
 extern std::vector<uint8_t> Get2FAMasterKey();
 extern void ReloadVaultCredentials();
+extern void NotePermanentlyDeleted(const std::string& uuid);
+extern bool FlushVaultBeforeDbOp();
 
 #include "credentials/credential_ops.h"
 #include "credentials/vault_db.h"
@@ -35,6 +37,13 @@ namespace time_ms {
     constexpr int64_t HOUR    =    3'600'000LL;
     constexpr int64_t DAY     =   86'400'000LL;
     constexpr int64_t WEEK    =  604'800'000LL;
+}
+
+// Display-only: never assign the result back into a Credential/AccordionItem
+// (inline edits copy item titles into the stored credential).
+inline const char* DisplayTitle(const std::string& title)
+{
+    return title.empty() ? "(untitled)" : title.c_str();
 }
 
 namespace ui

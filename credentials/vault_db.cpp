@@ -34,7 +34,9 @@ namespace vault_db {
     }
 
     static void bind_blob(sqlite3_stmt* stmt, int idx, const std::vector<uint8_t>& val) {
-        sqlite3_bind_blob(stmt, idx, val.data(), static_cast<int>(val.size()), SQLITE_TRANSIENT);
+        static const uint8_t dummy = 0;
+        const void* ptr = val.empty() ? static_cast<const void*>(&dummy) : static_cast<const void*>(val.data());
+        sqlite3_bind_blob(stmt, idx, ptr, static_cast<int>(val.size()), SQLITE_TRANSIENT);
     }
 
     static void bind_int64(sqlite3_stmt* stmt, int idx, int64_t val) {
@@ -127,6 +129,27 @@ namespace vault_db {
             return true;
         }
         return false;
+    }
+
+    bool looks_like_vault(const std::string& db_path)
+    {
+        sqlite3* db = nullptr;
+        if (sqlite3_open_v2(db_path.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            if (db) sqlite3_close(db);
+            return false;
+        }
+
+        bool ok = false;
+        sqlite3_stmt* st = nullptr;
+        const char* sql =
+            "SELECT 1 FROM pm_sync_state WHERE key = 'encryption_salt' "
+            "AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pm_credentials')";
+        if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK) {
+            ok = (sqlite3_step(st) == SQLITE_ROW);
+            sqlite3_finalize(st);
+        }
+        sqlite3_close(db);
+        return ok;
     }
 
     bool is_open()
@@ -515,6 +538,34 @@ namespace vault_db {
         return deleted;
     }
 
+#ifdef PD_OFFLINE_BUILD
+    bool hard_delete_trashed_before(const std::string& uuid, int64_t older_than_ms)
+    {
+        if (!g_db) return false;
+
+        // no is_dirty filter: offline soft-deletes are always dirty, so the sync-aware
+        // purge above would never match. Row must still be trashed and past the cutoff.
+        const char* sql = R"(
+            DELETE FROM pm_credentials
+            WHERE uuid = ?
+              AND deleted_at_ms IS NOT NULL
+              AND deleted_at_ms < ?
+        )";
+
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            return false;
+        }
+
+        bind_text(stmt, 1, uuid);
+        bind_int64(stmt, 2, older_than_ms);
+
+        bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+        sqlite3_finalize(stmt);
+        return ok;
+    }
+#endif // PD_OFFLINE_BUILD
+
     bool mark_synced(const std::string& uuid, int64_t server_rev)
     {
         if (!g_db) return false;
@@ -560,6 +611,169 @@ namespace vault_db {
     {
         return exec("UPDATE pm_credentials SET is_dirty = 0");
     }
+    bool clear_dirty(const std::string& uuid)
+    {
+        if (!g_db) return false;
+        const char* sql = "UPDATE pm_credentials SET is_dirty = 0 WHERE uuid = ?";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+        bind_text(stmt, 1, uuid);
+        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+        sqlite3_finalize(stmt);
+        return ok;
+    }
+
+    ResolveResult resolve_push_conflict_or_tombstone(
+        const std::string& old_uuid,
+        bool is_tombstone_response,
+        int64_t server_rev,
+        const std::vector<uint8_t>& master_key)
+    {
+        ResolveResult result;
+        result.resolution = PushResolution::IgnoredNoOp;
+        if (!g_db) return result;
+
+        auto row = get_credential(old_uuid);
+        if (!row.has_value()) return result;
+
+        bool is_permanent_delete = row->encrypted_blob.empty();
+        bool is_trashed = (row->deleted_at_ms > 0);
+        bool is_deletion = is_permanent_delete || is_trashed;
+
+        if (is_deletion) {
+            if (is_tombstone_response) {
+                // Permanent delete wins: apply permanent tombstone locally
+                int64_t del_ms = (row->deleted_at_ms > 0) ? row->deleted_at_ms : helpers::now_unix_ms();
+                force_apply_tombstone(old_uuid, del_ms, server_rev);
+                result.resolution = PushResolution::TombstoneApplied;
+            } else {
+                // Conflict with server edit: server edit wins, drop local delete
+                clear_dirty(old_uuid);
+                result.resolution = PushResolution::DeleteDropped;
+            }
+            return result;
+        }
+
+        // Active edit: decrypt with old_uuid AAD and re-encrypt with new_uuid AAD
+        std::string new_uuid = helpers::generate_uuid();
+        std::vector<uint8_t> new_blob = row->encrypted_blob;
+        if (!master_key.empty() && !new_blob.empty()) {
+            std::string plain = enc::decrypt_credential(new_blob, master_key, old_uuid);
+            if (plain.empty()) {
+                plain = enc::decrypt_credential_legacy(new_blob, master_key);
+            }
+            if (!plain.empty()) {
+                new_blob = enc::encrypt_credential(plain, master_key, new_uuid);
+            } else {
+                // Decryption failure: do not create corrupt fork
+                if (is_tombstone_response) {
+                    force_apply_tombstone(old_uuid, helpers::now_unix_ms(), server_rev);
+                    result.resolution = PushResolution::TombstoneApplied;
+                } else {
+                    clear_dirty(old_uuid);
+                    result.resolution = PushResolution::DeleteDropped;
+                }
+                return result;
+            }
+        }
+
+        // Execute fork and old row update in a SINGLE SQLite transaction
+        char* err_msg = nullptr;
+        if (sqlite3_exec(g_db, "BEGIN IMMEDIATE;", nullptr, nullptr, &err_msg) != SQLITE_OK) {
+            if (err_msg) sqlite3_free(err_msg);
+            return result;
+        }
+
+        bool tx_ok = false;
+        do {
+            int64_t now_ms = helpers::now_unix_ms();
+
+            // 1. Insert forked row with new_uuid (is_dirty = 1, server_rev = 0)
+            sqlite3_stmt* stmt_ins = nullptr;
+            const char* sql_ins = "INSERT INTO pm_credentials (uuid, encrypted_blob, created_at_ms, updated_at_ms, deleted_at_ms, server_rev, is_dirty) "
+                                  "VALUES (?, ?, ?, ?, NULL, 0, 1);";
+            if (sqlite3_prepare_v2(g_db, sql_ins, -1, &stmt_ins, nullptr) != SQLITE_OK) break;
+            sqlite3_bind_text(stmt_ins, 1, new_uuid.c_str(), -1, SQLITE_TRANSIENT);
+            bind_blob(stmt_ins, 2, new_blob);
+            sqlite3_bind_int64(stmt_ins, 3, row->created_at_ms);
+            sqlite3_bind_int64(stmt_ins, 4, now_ms);
+            int rc_ins = sqlite3_step(stmt_ins);
+            sqlite3_finalize(stmt_ins);
+            if (rc_ins != SQLITE_DONE) break;
+
+            // 2. Update old_uuid row: clear dirty (and apply tombstone if tombstoned response)
+            sqlite3_stmt* stmt_upd = nullptr;
+            if (is_tombstone_response) {
+                const char* sql_upd = "UPDATE pm_credentials SET is_dirty = 0, encrypted_blob = X'', deleted_at_ms = ?, server_rev = ? WHERE uuid = ?;";
+                if (sqlite3_prepare_v2(g_db, sql_upd, -1, &stmt_upd, nullptr) != SQLITE_OK) break;
+                sqlite3_bind_int64(stmt_upd, 1, now_ms);
+                sqlite3_bind_int64(stmt_upd, 2, server_rev);
+                sqlite3_bind_text(stmt_upd, 3, old_uuid.c_str(), -1, SQLITE_TRANSIENT);
+            } else {
+                const char* sql_upd = "UPDATE pm_credentials SET is_dirty = 0 WHERE uuid = ?;";
+                if (sqlite3_prepare_v2(g_db, sql_upd, -1, &stmt_upd, nullptr) != SQLITE_OK) break;
+                sqlite3_bind_text(stmt_upd, 1, old_uuid.c_str(), -1, SQLITE_TRANSIENT);
+            }
+            int rc_upd = sqlite3_step(stmt_upd);
+            sqlite3_finalize(stmt_upd);
+            if (rc_upd != SQLITE_DONE) break;
+
+            tx_ok = true;
+        } while (false);
+
+        if (tx_ok) {
+            sqlite3_exec(g_db, "COMMIT;", nullptr, nullptr, nullptr);
+            result.resolution = PushResolution::ForkedToNewUuid;
+            result.forked_new_uuid = new_uuid;
+        } else {
+            sqlite3_exec(g_db, "ROLLBACK;", nullptr, nullptr, nullptr);
+        }
+
+        return result;
+    }
+
+    bool clone_credential_to_new_uuid(
+        const std::string& old_uuid,
+        const std::string& new_uuid,
+        const std::vector<uint8_t>& master_key)
+    {
+        if (!g_db) return false;
+        auto row = get_credential(old_uuid);
+        if (!row.has_value()) return false;
+
+        std::vector<uint8_t> new_blob = row->encrypted_blob;
+        if (!master_key.empty() && !new_blob.empty()) {
+            std::string plain = enc::decrypt_credential(new_blob, master_key, old_uuid);
+            if (plain.empty()) {
+                plain = enc::decrypt_credential_legacy(new_blob, master_key);
+            }
+            if (!plain.empty()) {
+                new_blob = enc::encrypt_credential(plain, master_key, new_uuid);
+            }
+        }
+
+        int64_t now_ms = helpers::now_unix_ms();
+        return insert_credential(new_uuid, new_blob, row->created_at_ms, now_ms);
+    }
+
+    bool force_apply_tombstone(const std::string& uuid, int64_t deleted_at_ms, int64_t server_rev)
+    {
+        if (!g_db) return false;
+        const char* sql = R"(
+            UPDATE pm_credentials
+            SET deleted_at_ms = ?, server_rev = ?, encrypted_blob = X'', is_dirty = 0
+            WHERE uuid = ?
+        )";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(g_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+        bind_int64(stmt, 1, deleted_at_ms);
+        bind_int64(stmt, 2, server_rev);
+        bind_text(stmt, 3, uuid);
+        bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+        sqlite3_finalize(stmt);
+        return ok;
+    }
+
 
     bool apply_server_tombstone(const std::string& uuid, int64_t deleted_at_ms, int64_t server_rev)
     {
@@ -567,8 +781,8 @@ namespace vault_db {
 
         const char* sql = R"(
             UPDATE pm_credentials
-            SET deleted_at_ms = ?, server_rev = ?, is_dirty = 0
-            WHERE uuid = ?
+            SET deleted_at_ms = ?, server_rev = ?, encrypted_blob = X'', is_dirty = 0
+            WHERE uuid = ? AND is_dirty = 0 AND server_rev < ?
         )";
 
         sqlite3_stmt* stmt = nullptr;
@@ -579,6 +793,7 @@ namespace vault_db {
         bind_int64(stmt, 1, deleted_at_ms);
         bind_int64(stmt, 2, server_rev);
         bind_text(stmt, 3, uuid);
+        bind_int64(stmt, 4, server_rev);
 
         bool ok = sqlite3_step(stmt) == SQLITE_DONE;
         sqlite3_finalize(stmt);
@@ -666,6 +881,20 @@ namespace vault_db {
         sodium_bin2hex(hex.data(), hex.size(), salt.data(), salt.size());
         hex.resize(salt.size() * 2);
         return set_meta("encryption_salt", hex);
+    }
+
+    std::vector<uint8_t> get_key_check()
+    {
+        if (!g_db) return {};
+        std::string hex = get_meta("key_check");
+        if (hex.empty()) return {};
+        return enc::hex_to_bytes(hex);
+    }
+
+    bool set_key_check(const std::vector<uint8_t>& blob)
+    {
+        if (!g_db || blob.empty()) return false;
+        return set_meta("key_check", enc::bytes_to_hex(blob));
     }
 
     bool begin_transaction()

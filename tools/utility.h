@@ -13,6 +13,8 @@
 #include <cstddef>   // size_t
 #include <cstdint>   // int64_t, uint32_t
 
+#include "u8path.h"  // all std::string paths are UTF-8; convert at OS boundaries
+
 
 
 namespace helpers
@@ -107,10 +109,17 @@ namespace helpers
     std::string generate_password(const GenOptions& opt);
     double      estimate_entropy_bits(const GenOptions& opt);
 
+    // %LOCALAPPDATA%\PasswordDefense\<sub> (created). Local, non-roaming, and outside
+    // Documents, which OneDrive Known Folder Move commonly redirects into the cloud.
+    std::string GetLocalAppDataDir(const char* sub);
+    // one-time move of app-owned files (matching ext) out of the legacy
+    // Documents\PasswordManager\<sub> folder; never overwrites, removes the old folder if emptied
+    void        MigrateLegacyDocumentsDir(const char* sub, const std::string& new_dir, const char* ext);
+
     std::string GetDefaultBackupDir();
     void        SanitizeFilename(std::string& s);
     bool        CopyFileAtomic(const std::string& src, const std::string& dst);
-    void        EnforceBackupRetention(const std::string& dir, size_t keep_count);
+    void        EnforceBackupRetentionForVault(const std::string& vault_path, size_t keep_count);
     std::vector<std::string> ListBackupsForVault(const std::string& vault_path);
     std::string              Basename(const std::string& path);
     bool GetFileInfo(const std::string& path, uint64_t& outSizeBytes, std::string& outLocalTimeStr);

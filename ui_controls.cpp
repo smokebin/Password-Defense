@@ -2321,7 +2321,7 @@ namespace ui
                 row.subtitle = s_sd_index == 0 ? "Nothing will be deleted"
                              : s_sd_index == 1 ? "Exe will be deleted on exit"
                              : s_sd_index == 2 ? "Exe and config deleted on exit"
-                             :                   "Exe, config, and vaults deleted on exit";
+                             :                   "Exe, config, and vaults in the app folder deleted on exit";
                 row.leftIcon = ICON_MDI_BOMB;
                 row.rightType = SettingRightType::AnimatedCombo;
                 row.comboItems = sd_options;

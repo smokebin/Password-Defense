@@ -6,13 +6,17 @@
 #include <fstream>
 #include <cstdlib>
 #include <Windows.h>
+#include <shlobj.h>
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <unordered_set>
 
+#include <sqlite3.h>
 #include "../third_party/json.hpp"
 
 #include "utility.h"
+#include "config_migrate.h"
 
 namespace cfg {
 	std::string _path = "";
@@ -21,15 +25,34 @@ namespace cfg {
 	std::string exe_path = "";
 	std::string exe_full_path = "";
 
+	// One-time: a config.json holding legacy ANSI bytes (see config_migrate.h) is
+	// re-encoded to UTF-8 before anything parses it. The original bytes are kept
+	// once as config.json.pre-utf8.bak. Valid UTF-8 is never rewritten.
+	static void migrate_legacy_config_encoding()
+	{
+		if (!helpers::file_exists(cfg_path)) return;
+		const std::vector<unsigned char> raw = helpers::file_to_vec(cfg_path);
+		std::string text(raw.begin(), raw.end());
+		if (!helpers::MigrateLegacyAnsiText(text, helpers::LegacyAnsiCodePage())) return;
+
+		const std::string bak = cfg_path + ".pre-utf8.bak";
+		if (!helpers::file_exists(bak) && !helpers::bytes_to_file(bak.c_str(), raw))
+			return;  // no backup, no rewrite
+		helpers::bytes_to_file(cfg_path.c_str(), std::vector<unsigned char>(text.begin(), text.end()));
+	}
+
 	void init()
 	{
-		char exe_path_c[MAX_PATH];
-		GetModuleFileNameA(NULL, exe_path_c, MAX_PATH);
-		std::filesystem::path exe_path_full = std::string(exe_path_c);
+		wchar_t exe_path_w[32768];
+		const DWORD n = GetModuleFileNameW(NULL, exe_path_w, (DWORD)(sizeof(exe_path_w) / sizeof(exe_path_w[0])));
+		std::filesystem::path exe_path_full = std::wstring(exe_path_w, n);
 		std::filesystem::path exe_parent_path = exe_path_full.parent_path();
-		exe_path = exe_parent_path.string();
-		exe_full_path = exe_path_full.string();
-		cfg_path = exe_parent_path.string() + "\\config.json";
+		// UTF-8 like every other path string in the app (path::string() would use ANSI)
+		exe_path = helpers::PathToU8(exe_parent_path);
+		exe_full_path = helpers::PathToU8(exe_path_full);
+		cfg_path = exe_path + "\\config.json";
+
+		migrate_legacy_config_encoding();
 
 		if (!helpers::file_exists(cfg_path)) //no cfg file
 		{
@@ -968,6 +991,80 @@ namespace cfg {
 		return true;
 	}
 
+	// names the app itself generates for "New beside app": vault-<digits>.db
+	static bool is_app_vault_name(const std::string& name)
+	{
+		const std::string pre = "vault-", ext = ".db";
+		if (name.size() <= pre.size() + ext.size()) return false;
+		if (name.compare(0, pre.size(), pre) != 0) return false;
+		if (name.compare(name.size() - ext.size(), ext.size(), ext) != 0) return false;
+		for (size_t i = pre.size(); i < name.size() - ext.size(); ++i)
+			if (name[i] < '0' || name[i] > '9') return false;
+		return true;
+	}
+
+	// true only for a SQLite file carrying this app's vault schema + salt row, so an
+	// unrelated .db that happens to share a name is never touched
+	static bool is_password_defense_vault(const std::filesystem::path& p)
+	{
+		const auto u8 = p.u8string();
+		sqlite3* db = nullptr;
+		if (sqlite3_open_v2(reinterpret_cast<const char*>(u8.c_str()), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+			if (db) sqlite3_close(db);
+			return false;
+		}
+
+		bool ok = false;
+		sqlite3_stmt* st = nullptr;
+		const char* sql =
+			"SELECT 1 FROM pm_sync_state WHERE key = 'encryption_salt' "
+			"AND EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pm_credentials')";
+		if (sqlite3_prepare_v2(db, sql, -1, &st, nullptr) == SQLITE_OK) {
+			ok = (sqlite3_step(st) == SQLITE_ROW);
+			sqlite3_finalize(st);
+		}
+		sqlite3_close(db);
+		return ok;
+	}
+
+	// Exact files "Everything" may delete: vaults located in the exe folder that are
+	// either app-named (vault-N.db) or known to the app (recent list / default path),
+	// and that pass the schema check. Vaults elsewhere (e.g. a OneDrive folder) are
+	// never touched: deleting a synced vault would propagate to every device.
+	static std::vector<std::string> collect_vaults_to_destroy()
+	{
+		namespace fs = std::filesystem;
+		std::vector<std::string> out;
+		if (exe_path.empty()) return out;
+		const fs::path dir = helpers::U8Path(exe_path);
+
+		std::vector<fs::path> candidates;
+		std::error_code ec;
+		for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+			std::error_code fe;
+			if (it->is_regular_file(fe) && is_app_vault_name(helpers::PathToU8(it->path().filename())))
+				candidates.push_back(it->path());
+		}
+
+		std::vector<std::string> known = get_recent_vaults();
+		if (!_path.empty() && _path != "NONE") known.push_back(_path);
+		for (const auto& k : known) {
+			const fs::path p = helpers::U8Path(k);
+			std::error_code e;
+			if (fs::is_regular_file(p, e) && fs::equivalent(p.parent_path(), dir, e) && !e)
+				candidates.push_back(p);
+		}
+
+		std::unordered_set<std::string> seen;
+		for (const auto& p : candidates) {
+			const std::string u8 = helpers::PathToU8(p);
+			if (!seen.insert(norm_vault_key(u8)).second) continue;
+			if (!is_password_defense_vault(p)) continue;
+			out.push_back(u8);
+		}
+		return out;
+	}
+
 	static void self_destruct_atexit_handler()
 	{
 		int mode = get_self_destruct_mode(); // re-read so mid-session disable is respected
@@ -976,7 +1073,6 @@ namespace cfg {
 
 		if (!is_safe_path(exe_full_path)) return;
 		if (mode >= 2 && !cfg_path.empty() && !is_safe_path(cfg_path)) return;
-		if (mode >= 3 && !exe_path.empty() && !is_safe_path(exe_path)) return;
 
 		// ping delay gives the process time to exit before deletion fires
 		std::string cmd = "ping 127.0.0.1 -n 2 >nul";
@@ -984,20 +1080,66 @@ namespace cfg {
 		cmd += " & del /f /q \"" + exe_full_path + "\"";
 
 		if (mode >= 2 && !cfg_path.empty())
+		{
 			cmd += " & del /f /q \"" + cfg_path + "\"";
+			// the one-time encoding-migration backup holds the same paths as config.json
+			const std::string bak = cfg_path + ".pre-utf8.bak";
+			if (helpers::file_exists(bak))
+				cmd += " & del /f /q \"" + bak + "\"";
+		}
 
-		if (mode >= 3 && !exe_path.empty())
-			cmd += " & del /f /q \"" + exe_path + "\\*.db\"";
+		// exact paths only — no wildcards next to the exe (it may live in Downloads etc.)
+		if (mode >= 3) {
+			const size_t kMaxCmd = 7500;  // cmd.exe line limit is 8191
 
-		STARTUPINFOA si{};
+			// Emergency recovery snapshots (%LOCALAPPDATA%\PasswordDefense\recovery) hold
+			// vault contents, so a full self-destruct must erase them. It is one shared
+			// directory: wipe it once, BEFORE the vault loop so a long vault/backup list
+			// can't starve it out of the command budget, and regardless of whether any
+			// vaults were found under app folders (they may live in OneDrive/Documents,
+			// where collect_vaults_to_destroy() finds nothing).
+			{
+				auto rec_dir = get_recovery_directory_path();
+				std::error_code ec_rec;
+				if (!rec_dir.empty() && std::filesystem::exists(rec_dir, ec_rec)) {
+					std::string rec_part = " & rmdir /s /q \"" + helpers::WideToUtf8(rec_dir) + "\"";
+					if (cmd.size() + rec_part.size() <= kMaxCmd)
+						cmd += rec_part;
+				}
+			}
+
+			for (const auto& v : collect_vaults_to_destroy()) {
+				if (!is_safe_path(v)) continue;
+				std::string part = " & del /f /q \"" + v + "\"";
+				for (const char* side : { "-wal", "-shm" }) {
+					std::error_code e;
+					if (std::filesystem::exists(helpers::U8Path(v + side), e))
+						part += " & del /f /q \"" + v + side + "\"";
+				}
+				if (cmd.size() + part.size() > kMaxCmd) break;
+				cmd += part;
+
+				// Backups for destroyed vaults must not survive on disk in %LOCALAPPDATA%
+				for (const auto& bak : helpers::ListBackupsForVault(v)) {
+					if (!is_safe_path(bak)) continue;
+					std::string bak_part = " & del /f /q \"" + bak + "\"";
+					if (cmd.size() + bak_part.size() > kMaxCmd) break;
+					cmd += bak_part;
+				}
+			}
+		}
+
+		// cmd is UTF-8; launch through the wide API so non-ASCII paths reach cmd.exe
+		// intact (CreateProcessA would reinterpret them in the ANSI code page)
+		STARTUPINFOW si{};
 		si.cb = sizeof(si);
 		si.dwFlags = STARTF_USESHOWWINDOW;
 		si.wShowWindow = SW_HIDE;
 
 		PROCESS_INFORMATION pi{};
-		std::string cmdline = "cmd.exe /C \"" + cmd + "\"";
+		std::wstring cmdline = helpers::Utf8ToWide("cmd.exe /C \"" + cmd + "\"");
 
-		CreateProcessA(
+		CreateProcessW(
 			NULL,
 			&cmdline[0],
 			NULL, NULL, FALSE,
@@ -1008,6 +1150,17 @@ namespace cfg {
 
 		if (pi.hProcess) CloseHandle(pi.hProcess);
 		if (pi.hThread)  CloseHandle(pi.hThread);
+	}
+
+	std::wstring get_recovery_directory_path()
+	{
+		wchar_t appdata_w[MAX_PATH] = { 0 };
+		if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata_w))) {
+			std::wstring p = appdata_w;
+			p += L"\\PasswordDefense\\recovery";
+			return p;
+		}
+		return L"";
 	}
 
 	void register_self_destruct_handler()

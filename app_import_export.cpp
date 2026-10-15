@@ -97,134 +97,70 @@ std::vector<Credential> deserialize_creds_json(const std::string& json_str)
     return result;
 }
 
+// All pickers use the wide (UTF-16) dialog APIs and return UTF-8, the app's single
+// path encoding. The ANSI variants returned code-page bytes that SQLite then read as
+// UTF-8, so a path like C:\Users\José\... could resolve to a different file.
+static std::string PickFileW(bool save, const wchar_t* filter, const wchar_t* def_ext, DWORD flags)
+{
+    wchar_t file[32768] = { 0 };   // long-path capable buffer
+
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = GetActiveWindow();
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = (DWORD)(sizeof(file) / sizeof(file[0]));
+    ofn.lpstrFilter = filter;
+    ofn.nFilterIndex = 1;
+    ofn.lpstrDefExt = def_ext;
+    ofn.Flags = flags | OFN_NOCHANGEDIR;
+
+    const BOOL ok = save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn);
+    if (!ok) return {};
+    return helpers::WideToUtf8(file);
+}
+
 std::string PickOpenFilePath_DB()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "Vault Database (*.db)\0*.db\0All Files\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    return PickFileW(false, L"Vault Database (*.db)\0*.db\0All Files\0*.*\0", nullptr,
+                     OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST);
 }
 
 std::string PickSaveFilePath_DB()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "Vault Database (*.db)\0*.db\0All Files\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "db";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    // no OFN_OVERWRITEPROMPT: create never replaces an existing file; the caller
+    // offers "Open it instead?" for an existing vault
+    return PickFileW(true, L"Vault Database (*.db)\0*.db\0All Files\0*.*\0", L"db",
+                     OFN_PATHMUSTEXIST);
 }
 
 std::string PickSaveFilePath_PWM()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "Encrypted Export (*.pwm)\0*.pwm\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "pwm";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    return PickFileW(true, L"Encrypted Export (*.pwm)\0*.pwm\0", L"pwm",
+                     OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT);
 }
 
 std::string PickOpenFilePath_PWM()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "Encrypted Export (*.pwm)\0*.pwm\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    return PickFileW(false, L"Encrypted Export (*.pwm)\0*.pwm\0", nullptr,
+                     OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST);
 }
 
 std::string PickSaveFilePath_CSV()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "CSV File (*.csv)\0*.csv\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "csv";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    return PickFileW(true, L"CSV File (*.csv)\0*.csv\0", L"csv",
+                     OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT);
 }
 
 std::string PickSaveFilePath_KDBX()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "KeePass Database (*.kdbx)\0*.kdbx\0";
-    ofn.nFilterIndex = 1;
-    ofn.lpstrDefExt = "kdbx";
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-
-    if (GetSaveFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    return PickFileW(true, L"KeePass Database (*.kdbx)\0*.kdbx\0", L"kdbx",
+                     OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT);
 }
 
 std::string PickOpenFilePath_CSV()
 {
-    char file[MAX_PATH] = { 0 };
-
-    OPENFILENAMEA ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = nullptr;
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.lpstrFilter = "CSV File (*.csv)\0*.csv\0All Files\0*.*\0";
-    ofn.nFilterIndex = 1;
-    ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
-
-    if (GetOpenFileNameA(&ofn))
-        return std::string(file);
-    return {};
+    return PickFileW(false, L"CSV File (*.csv)\0*.csv\0All Files\0*.*\0", nullptr,
+                     OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST);
 }
 
 static std::vector<std::string> csv_split_line(const std::string& line)

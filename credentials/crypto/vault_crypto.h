@@ -38,6 +38,11 @@ namespace enc {
         const std::vector<uint8_t>& blob,
         const std::vector<uint8_t>& master_key);
 
+    // vault key-check: a fixed constant encrypted under the master key (own AAD).
+    // Lets unlock reject a wrong password even when the vault has no credentials.
+    std::vector<uint8_t> make_key_check(const std::vector<uint8_t>& master_key);
+    bool verify_key_check(const std::vector<uint8_t>& blob, const std::vector<uint8_t>& master_key);
+
     void secure_zero(std::vector<uint8_t>& data);
     void secure_zero(std::string& data);
 

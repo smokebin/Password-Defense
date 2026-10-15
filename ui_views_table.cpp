@@ -353,7 +353,7 @@ namespace ui
                     float maxIconsW = ImMax(pinFavW, secW);
                     float titleW = maxIconsW > 0 ? colW - maxIconsW - 4.0f : colW;
                     ImGui::PushFont(render::FontBold);
-                    TextEllipsisClipped(c.title.c_str(), titleW);
+                    TextEllipsisClipped(DisplayTitle(c.title), titleW);
                     ImGui::PopFont();
 
                     if (pinFavW > 0)

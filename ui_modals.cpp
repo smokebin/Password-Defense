@@ -444,10 +444,18 @@ namespace ui
 
                         if (StyledButtonLight("##restore", ICON_MDI_UNDO, ImVec2(btnSz, btnSz)))
                         {
-                            vault_db::restore_credential(c.uuid);
-                            s_trash_needs_refresh = true;
-                            ReloadVaultCredentials();
-                            ShowToast("Credential restored", ToastType::Success);
+                            // the reload below replaces memory with disk: save pending
+                            // edits/removals first or they'd be lost (or resurrected)
+                            if (!FlushVaultBeforeDbOp())
+                                ShowToast("Save pending changes first (save failed)", ToastType::Error);
+                            else if (!vault_db::restore_credential(c.uuid))
+                                ShowToast("Restore failed", ToastType::Error);
+                            else
+                            {
+                                s_trash_needs_refresh = true;
+                                ReloadVaultCredentials();
+                                ShowToast("Credential restored", ToastType::Success);
+                            }
                         }
                         if (ImGui::IsItemHovered()) SetTooltipPadded("Restore");
 
@@ -456,9 +464,14 @@ namespace ui
                         ImGui::PushStyleColor(ImGuiCol_Text, colors::ErrorTextAlt);
                         if (StyledButtonLight("##permdelete", ICON_MDI_DELETE, ImVec2(btnSz, btnSz)))
                         {
-                            vault_db::hard_delete_credential(c.uuid);
+                            if (vault_db::hard_delete_credential(c.uuid))
+                            {
+                                NotePermanentlyDeleted(c.uuid);  // undo can't bring it back
+                                ShowToast("Permanently deleted", ToastType::Success);
+                            }
+                            else
+                                ShowToast("Delete failed", ToastType::Error);
                             s_trash_needs_refresh = true;
-                            ShowToast("Permanently deleted", ToastType::Success);
                         }
                         ImGui::PopStyleColor();
                         if (ImGui::IsItemHovered()) SetTooltipPadded("Delete permanently");
@@ -479,10 +492,19 @@ namespace ui
                 ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(220, 70, 70, 255));
                 if (StyledButtonLight("##empty_trash", ICON_MDI_DELETE " Empty Trash", ImVec2(0, 30)))
                 {
+                    int failed = 0;
                     for (const auto& c : s_trash_items)
-                        vault_db::hard_delete_credential(c.uuid);
+                    {
+                        if (vault_db::hard_delete_credential(c.uuid))
+                            NotePermanentlyDeleted(c.uuid);
+                        else
+                            failed++;
+                    }
                     s_trash_needs_refresh = true;
-                    ShowToast("Trash emptied", ToastType::Success);
+                    if (failed == 0)
+                        ShowToast("Trash emptied", ToastType::Success);
+                    else
+                        ShowToast("Some items couldn't be deleted", ToastType::Error);
                 }
                 ImGui::PopStyleColor();
                 ImGui::SameLine();

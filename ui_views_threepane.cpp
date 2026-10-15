@@ -919,7 +919,7 @@ namespace ui
                                     ImGui::PushClipRect(ImVec2(textX, selPos.y), ImVec2(textX + maxTextW, selPos.y + childRowH), true);
                                     cdl->AddText(ImVec2(textX, textY),
                                         ImGui::GetColorU32(childSelected ? ImGuiCol_Text : ImGuiCol_TextDisabled),
-                                        child.title.c_str());
+                                        DisplayTitle(child.title));
                                     ImGui::PopClipRect();
                                 }
 
@@ -935,7 +935,7 @@ namespace ui
                                     tdl->AddLine(ImVec2(treeLineX, vTop), ImVec2(treeLineX, vBot), treeCol, 1.0f);
                                 }
 
-                                if (ImGui::IsItemHovered()) SetTooltipPadded("%s", child.title.c_str());
+                                if (ImGui::IsItemHovered()) SetTooltipPadded("%s", DisplayTitle(child.title));
                                 ImGui::PopID();
                                 shown++;
                             }
@@ -1356,7 +1356,7 @@ namespace ui
                 if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
                 {
                     ImGui::SetDragDropPayload("CRED_ID", &it.id, sizeof(int));
-                    ImGui::Text("%s", it.title.c_str());
+                    ImGui::Text("%s", DisplayTitle(it.title));
                     ImGui::EndDragDropSource();
                 }
 
@@ -1377,7 +1377,7 @@ namespace ui
                 {
                     if (s.hover_expand)
                         s.three_pane_selected_id = it.id;
-                    SetTooltipPadded("%s", it.title.c_str());
+                    SetTooltipPadded("%s", DisplayTitle(it.title));
                 }
 
                 {
@@ -1534,7 +1534,7 @@ namespace ui
                 if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
                 {
                     ImGui::SetDragDropPayload("CRED_ID", &it.id, sizeof(int));
-                    ImGui::Text("%s", it.title.c_str());
+                    ImGui::Text("%s", DisplayTitle(it.title));
                     ImGui::EndDragDropSource();
                 }
 
@@ -1568,7 +1568,7 @@ namespace ui
                     float blockY = rMin.y + (rowH - blockH) * 0.5f + 2.0f;
 
                     {
-                        const char* titleText = cols.title ? it.title.c_str() : "";
+                        const char* titleText = cols.title ? DisplayTitle(it.title) : "";
                         ImVec2 titlePos(textX, blockY);
                         fdl->AddText(render::FontBold, regSz, titlePos, ImGui::GetColorU32(ImGuiCol_Text), titleText);
                     }
@@ -2088,7 +2088,7 @@ namespace ui
             float maxTitleW = ImGui::GetContentRegionAvail().x - textX + headerMin.x - 10.0f;
             dl->PushClipRect(ImVec2(textX, blockY), ImVec2(textX + maxTitleW, blockY + titleFontSz + 1.0f), true);
             dl->AddText(render::FontBold, titleFontSz,
-                ImVec2(textX, blockY), ImGui::GetColorU32(ImGuiCol_Text), c.title.c_str());
+                ImVec2(textX, blockY), ImGui::GetColorU32(ImGuiCol_Text), DisplayTitle(c.title));
             dl->PopClipRect();
 
             dl->AddText(render::FontSmall, subFontSz,

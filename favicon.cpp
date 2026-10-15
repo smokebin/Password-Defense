@@ -8,6 +8,7 @@
     #include <ShlObj.h>
     #include <winhttp.h>
     #pragma comment(lib, "winhttp.lib")
+    #include "tools/utility.h"
 #else
     #define CPPHTTPLIB_OPENSSL_SUPPORT
     #include "web/httplib.h"
@@ -73,10 +74,11 @@ static ID3D11ShaderResourceView* CreateTextureFromMemory(const unsigned char* da
 static std::string GetCacheDir()
 {
 #ifdef _WIN32
-    char docs[MAX_PATH];
-    if (SHGetFolderPathA(nullptr, CSIDL_PERSONAL, nullptr, SHGFP_TYPE_CURRENT, docs) != S_OK)
-        return ".\\Favicons";
-    return std::string(docs) + "\\PasswordManager\\Favicons";
+    // filenames are plaintext domains (github.com.png) — keep them local, out of
+    // Documents/OneDrive, same as backups
+    std::string dir = helpers::GetLocalAppDataDir("Favicons");
+    helpers::MigrateLegacyDocumentsDir("Favicons", dir, ".png");
+    return dir;
 #else
     const char* home = getenv("HOME");
     if (!home) home = "/tmp";
@@ -91,7 +93,7 @@ static std::string DiskCachePath(const std::string& domain)
 
 static std::vector<uint8_t> ReadFile(const std::string& path)
 {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    std::ifstream f(helpers::U8Path(path), std::ios::binary | std::ios::ate);
     if (!f) return {};
     auto sz = f.tellg();
     if (sz <= 0) return {};
@@ -103,7 +105,7 @@ static std::vector<uint8_t> ReadFile(const std::string& path)
 
 static void WriteFile(const std::string& path, const std::vector<uint8_t>& data)
 {
-    std::ofstream f(path, std::ios::binary);
+    std::ofstream f(helpers::U8Path(path), std::ios::binary);
     if (f)
         f.write(reinterpret_cast<const char*>(data.data()), data.size());
 }
@@ -251,7 +253,8 @@ void Init()
     s_initialized = true;
 
     s_cache_dir = GetCacheDir();
-    std::filesystem::create_directories(s_cache_dir);
+    std::error_code ec;
+    std::filesystem::create_directories(helpers::U8Path(s_cache_dir), ec);
 
     LoadBundled();
 }
@@ -271,8 +274,8 @@ CacheStats GetCacheStats()
     CacheStats st;
     if (s_cache_dir.empty()) return st;
     std::error_code ec;
-    if (!std::filesystem::exists(s_cache_dir, ec)) return st;
-    for (std::filesystem::directory_iterator it(s_cache_dir, ec), end; it != end; it.increment(ec))
+    if (!std::filesystem::exists(helpers::U8Path(s_cache_dir), ec)) return st;
+    for (std::filesystem::directory_iterator it(helpers::U8Path(s_cache_dir), ec), end; it != end; it.increment(ec))
     {
         if (ec) break;
         if (!it->is_regular_file(ec)) continue;
@@ -288,7 +291,7 @@ void ClearCache()
     if (!s_cache_dir.empty())
     {
         std::error_code ec;
-        for (std::filesystem::directory_iterator it(s_cache_dir, ec), end; it != end; it.increment(ec))
+        for (std::filesystem::directory_iterator it(helpers::U8Path(s_cache_dir), ec), end; it != end; it.increment(ec))
         {
             if (ec) break;
             if (it->path().extension() == ".png")
