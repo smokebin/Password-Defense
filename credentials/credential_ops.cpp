@@ -63,6 +63,17 @@ namespace cred_ops {
                 {"changed_at_ms", h.changed_at_ms}
             });
         }
+
+        // Cards: also write the billing street address under the old "address"
+        // key, not just "card_address". A vault file exported from here and
+        // imported into an app that predates card_address (mobile, web) still
+        // finds the value, and won't drop it. "address" is unused on cards so
+        // there's nothing to clobber. The from_json fold below reads it back.
+        // Drop this once every app knows card_address.
+        if (c.type == CredType::CreditCard && !c.card_address.empty()) {
+            j["address"] = c.card_address;
+        }
+
         return j;
     }
 
@@ -100,6 +111,18 @@ namespace cred_ops {
         c.country       = j.value("country", "");
         c.address       = j.value("address", "");
         c.phone         = j.value("phone", "");
+
+        // Old cards stored the billing address under "address" before
+        // card_address existed. Fold it over when the new field is empty.
+        // card_address wins when it's set; otherwise fall back to address.
+        // Don't erase address — apps that predate card_address still read it,
+        // and they'd drop card_address on save, losing it everywhere.
+        if (c.type == CredType::CreditCard
+            && c.card_address.empty()
+            && !c.address.empty())
+        {
+            c.card_address = c.address;
+        }
 
         // absent in old blobs — default to empty
         c.tags.clear();
