@@ -16,6 +16,21 @@ static std::wstring GetDefaultBridgeExePath()
     GetModuleFileNameW(NULL, modulePath, MAX_PATH);
     fs::path p(modulePath);
     p.replace_filename(L"pw-bridge.exe");
+    if (fs::exists(p)) {
+        return p.wstring();
+    }
+
+    // Fallbacks if running standalone or in dev without copying bridge
+    const wchar_t* fallbacks[] = {
+        L"A:\\apps\\Password Defense\\pw-bridge.exe",
+        L"A:\\prjcts\\pwmngr\\pw-windows-cloud\\x64\\Release\\pw-bridge.exe",
+        L"A:\\prjcts\\pwmngr\\pw-windows\\x64\\Release\\pw-bridge.exe"
+    };
+    for (const wchar_t* fb : fallbacks) {
+        if (fs::exists(fb)) {
+            return fb;
+        }
+    }
     return p.wstring();
 }
 

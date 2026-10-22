@@ -522,29 +522,39 @@ std::string BridgeServer::ProcessMessage(const std::string& jsonRequest)
         return R"({"ok":false,"error":"Invalid JSON"})";
     }
 
-    std::string action = j.value("action", "");
-    if (action == "status") {
-        return HandleStatus();
-    } else if (action == "match") {
-        return HandleMatch(j.value("url", ""));
-    } else if (action == "search") {
-        return HandleSearch(j.value("q", ""));
-    } else if (action == "check") {
-        return HandleCheck(j.value("hostname", ""), j.value("username", ""), j.value("password", ""));
-    } else if (action == "save") {
-        return HandleSave(
-            j.value("save_action", j.value("action_type", "save_new")),
-            j.value("hostname", ""),
-            j.value("title", ""),
-            j.value("username", ""),
-            j.value("password", ""),
-            j.value("existing_id", ""));
-    } else {
-        nlohmann::json err;
-        err["ok"] = false;
-        err["error"] = "unknown_action";
-        return err.dump();
+    nlohmann::json resp;
+    try {
+        std::string action = j.value("action", "");
+        if (action == "status") {
+            resp = nlohmann::json::parse(HandleStatus());
+        } else if (action == "match") {
+            resp = nlohmann::json::parse(HandleMatch(j.value("url", "")));
+        } else if (action == "search") {
+            resp = nlohmann::json::parse(HandleSearch(j.value("q", "")));
+        } else if (action == "check") {
+            resp = nlohmann::json::parse(HandleCheck(j.value("hostname", ""), j.value("username", ""), j.value("password", "")));
+        } else if (action == "save") {
+            resp = nlohmann::json::parse(HandleSave(
+                j.value("save_action", j.value("action_type", "save_new")),
+                j.value("hostname", ""),
+                j.value("title", ""),
+                j.value("username", ""),
+                j.value("password", ""),
+                j.value("existing_id", "")));
+        } else {
+            resp["ok"] = false;
+            resp["error"] = "unknown_action";
+        }
+    } catch (...) {
+        resp["ok"] = false;
+        resp["error"] = "handler_error";
     }
+
+    if (j.contains("_req_id")) {
+        resp["_req_id"] = j["_req_id"];
+    }
+
+    return resp.dump();
 }
 
 std::string BridgeServer::HandleStatus()
