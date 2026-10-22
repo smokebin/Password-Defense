@@ -1,5 +1,6 @@
 // ui_controls.cpp — list controls, sort/view dropdowns, selection toolbar, settings page
 #include "ui_internal.h"
+#include "bridge/bridge_server.h"
 
 namespace ui
 {
@@ -1198,6 +1199,7 @@ namespace ui
             { "Font Scale",       "Adjust global text size",                   ICON_MDI_FORMAT_SIZE,      "Vault",    0 },
             { "Privacy Mode",     "Mask personal info with bullets",           ICON_MDI_EYE_OFF,  "Vault",    0 },
             { "Blur on Unfocus",  "Dim the app when it loses focus",           ICON_MDI_BLUR,             "Vault",    0 },
+            { "Browser Extension", "Native Messaging autofill for Chrome, Edge, Brave", ICON_MDI_PUZZLE, "Vault", 0 },
             // Tab 1 - Security
             { "Clear Clipboard",  "Auto-clear copied passwords",               ICON_MDI_CLIPBOARD,         "Security", 1 },
             { "Auto-lock",        "Lock vault after inactivity",               ICON_MDI_CLOCK,             "Security", 1 },
@@ -1791,6 +1793,75 @@ namespace ui
                 row.toggleValue = &s.privacy_mode;
                 auto r = RenderSettingRow(row, &g_settings_selected_row, 54.0f);
                 if (r.action_used) cfg::set_privacy_mode(s.privacy_mode);
+            }
+
+            EndCategoryCard();
+
+            // ---- Browser Extension Card ----
+            BeginCategoryCard("Browser Extension", "Autofill credentials in Chrome, Edge, Brave, and Safari");
+
+            // 1. Native Messaging IPC Status
+            {
+                const bool bridge_active = bridge::BridgeServer::GetInstance().IsRunning();
+                SettingRowSpec row{};
+                row.id = ImGui::GetID("ext_native_bridge");
+                row.title = "Native Messaging IPC";
+                row.subtitle = "Zero-config secure OS pipe · No open ports";
+                row.leftIcon = ICON_MDI_SHIELD_CHECK;
+                row.rightType = SettingRightType::Text;
+                row.rightText = bridge_active ? "Active" : "Ready";
+                RenderSettingRow(row, &g_settings_selected_row, 54.0f);
+                DrawRowDivider();
+            }
+
+            // 2. Supported Browsers
+            {
+                SettingRowSpec row{};
+                row.id = ImGui::GetID("ext_supported_browsers");
+                row.title = "Supported Browsers";
+                row.subtitle = "Auto-registered for Chrome, Edge, and Brave";
+                row.leftIcon = ICON_MDI_WEB;
+                row.rightType = SettingRightType::Text;
+                row.rightText = "Registered";
+                RenderSettingRow(row, &g_settings_selected_row, 54.0f);
+                DrawRowDivider();
+            }
+
+            // 3. How It Works Hint Section
+            {
+                const float padX = 18.0f;
+                const float rightMargin = 16.0f;
+                const float wrapWidth = ImGui::GetContentRegionAvail().x - rightMargin;
+
+                ImGui::Dummy(ImVec2(0, 4.0f));
+                ImGui::Indent(padX);
+
+                ImGui::PushFont(render::FontRegular);
+                ImGui::PushStyleColor(ImGuiCol_Text, IsDarkTheme() ? ImVec4(0.45f, 0.78f, 1.0f, 1.0f) : ImVec4(0.12f, 0.45f, 0.85f, 1.0f));
+                ImGui::TextUnformatted(ICON_MDI_LIGHTBULB_OUTLINE "  HOW IT WORKS");
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+
+                ImGui::Dummy(ImVec2(0, 3.0f));
+
+                ImGui::PushFont(render::FontSmall);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetColorU32(ImGuiCol_TextDisabled));
+                ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + wrapWidth);
+
+                ImGui::TextUnformatted(
+                    "1. Install the Password Defense extension (pwmngr-ext) in Chrome, Edge, or Brave.\n"
+                    "2. Keep Password Defense open with your vault unlocked.\n"
+                    "3. Click the extension icon or press Ctrl+Shift+L on any login page to autofill.\n\n"
+                    "Communication is isolated to your local user session via an OS-level named pipe.\n"
+                    "No network ports or manual pairing codes are required."
+                );
+
+                ImGui::PopTextWrapPos();
+                ImGui::PopStyleColor();
+                ImGui::PopFont();
+
+                ImGui::Unindent(padX);
+                ImGui::Dummy(ImVec2(0, 6.0f));
             }
 
             EndCategoryCard();

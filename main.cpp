@@ -1,7 +1,10 @@
 #include "GUI.h"
 #include "tools/save.h"
+#include "bridge/bridge_server.h"
 
+#ifndef SODIUM_STATIC
 #define SODIUM_STATIC
+#endif
 #include <sodium.h>
 
 int main()
@@ -46,6 +49,7 @@ int main()
 		render::EndGUIDraw();
 	}
 
+	bridge::BridgeServer::GetInstance().Stop();
 	render::GUIShutDown();
 	return 0;
 }

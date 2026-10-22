@@ -37,6 +37,8 @@
 #include "tools/save.h"          // Config persistence
 #include "app_internal.h"     // Shared declarations for split TUs
 #include "theme_colors.h"
+#include "bridge/bridge_server.h"
+#include "bridge/bridge_registration.h"
 
 // This TU assumes offline semantics (e.g. trash purge ignores sync state). The
 // sync build must not compile it as-is; see purge_trash_older_than in vault_db.h.
@@ -5142,11 +5144,51 @@ void render::DisplayProgram()
 
         // Load password aging threshold
         g_shell.password_max_age_days = cfg::get_password_max_age_days();
+
+        // Native Messaging bridge self-registration and startup
+        bridge::RegisterNativeMessagingHosts();
+        bridge::BridgeServer::GetInstance().Start();
     }
 
     ui::OskPreFrame(); // Intercept mouse clicks over OSK before widgets see them
     ui::Initialize();
     ActiveTab(); // ensure tab exists
+
+    // Bridge IPC synchronization with browser extension
+    {
+        VaultState& curV = ActiveVault();
+        static bool s_bridge_was_unlocked = false;
+        static uint32_t s_bridge_last_hash = 0;
+
+        if (curV.unlocked)
+        {
+            bridge::BridgeServer::GetInstance().DrainPendingWrites(
+                curV.creds,
+                curV.master_key,
+                [&]() {
+                    VaultMarkChanged(curV, "EXTENSION_SAVE");
+                    save_vault_to_disk(curV);
+                    rebuild_groups(g_shell, curV.creds);
+                    rebuild_tags(g_shell, curV.creds);
+                });
+
+            if (!s_bridge_was_unlocked || s_bridge_last_hash != curV.current_hash)
+            {
+                s_bridge_was_unlocked = true;
+                s_bridge_last_hash = curV.current_hash;
+                bridge::BridgeServer::GetInstance().OnVaultUnlocked(curV.creds, curV.vault_path);
+            }
+        }
+        else
+        {
+            if (s_bridge_was_unlocked)
+            {
+                s_bridge_was_unlocked = false;
+                s_bridge_last_hash = 0;
+                bridge::BridgeServer::GetInstance().OnVaultLocked();
+            }
+        }
+    }
 
     // Always draw shell; inside it, draw locked or unlocked for ActiveVault()
     render_unlocked_screen(); // (this function now handles locked internally)

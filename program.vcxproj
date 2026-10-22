@@ -126,7 +126,7 @@
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
-      <AdditionalIncludeDirectories>icons;tools;credentials;third_party\sqlite;libs\libsodium\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;bridge;icons;tools;credentials;third_party\sqlite;libs\libsodium\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard_C>Default</LanguageStandard_C>
       <AdditionalOptions>/FS %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -174,8 +174,12 @@
     <ClCompile Include="tools\utility.cpp" />
     <ClCompile Include="tools\totp.cpp" />
     <ClCompile Include="tools\qrcodegen.cpp" />
+    <ClCompile Include="bridge\bridge_server.cpp" />
+    <ClCompile Include="bridge\bridge_registration.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="bridge\bridge_server.h" />
+    <ClInclude Include="bridge\bridge_registration.h" />
     <ClInclude Include="tools\save.h" />
     <ClInclude Include="credentials\credential.h" />
     <ClInclude Include="credentials\vault_db.h" />
