@@ -448,6 +448,8 @@ void BridgeServer::DrainPendingWrites(
             c.user = cmd->username;
             c.password = cmd->password;
             c.website = cmd->hostname;
+            c.notes = cmd->notes;
+            c.totp_secret = cmd->totp_secret;
             c.type = CredType::Password;
 
             int max_id = 0;
@@ -479,7 +481,12 @@ void BridgeServer::DrainPendingWrites(
             bool found = false;
             for (auto& c : uiCreds) {
                 if (c.uuid == cmd->existing_id) {
-                    c.password = cmd->password;
+                    if (!cmd->password.empty()) c.password = cmd->password;
+                    if (!cmd->title.empty()) c.title = cmd->title;
+                    if (!cmd->username.empty()) c.user = cmd->username;
+                    if (!cmd->hostname.empty()) c.website = cmd->hostname;
+                    c.notes = cmd->notes;
+                    c.totp_secret = cmd->totp_secret;
                     c.updated_at_ms = static_cast<int64_t>(std::time(nullptr)) * 1000;
                     res.ok = true;
                     res.uuid = c.uuid;
@@ -489,6 +496,20 @@ void BridgeServer::DrainPendingWrites(
                 }
             }
             if (!found) {
+                res.ok = false;
+                res.error = "Credential not found";
+            }
+        }
+        else if (cmd->action == "delete" && !cmd->existing_id.empty()) {
+            auto it = std::find_if(uiCreds.begin(), uiCreds.end(), [&](const Credential& cr) {
+                return cr.uuid == cmd->existing_id;
+            });
+            if (it != uiCreds.end()) {
+                uiCreds.erase(it);
+                res.ok = true;
+                res.uuid = cmd->existing_id;
+                stateChanged = true;
+            } else {
                 res.ok = false;
                 res.error = "Credential not found";
             }
@@ -536,11 +557,16 @@ std::string BridgeServer::ProcessMessage(const std::string& jsonRequest)
         } else if (action == "save") {
             resp = nlohmann::json::parse(HandleSave(
                 j.value("save_action", j.value("action_type", "save_new")),
-                j.value("hostname", ""),
+                j.value("hostname", j.value("website", "")),
                 j.value("title", ""),
-                j.value("username", ""),
+                j.value("username", j.value("user", "")),
                 j.value("password", ""),
-                j.value("existing_id", "")));
+                j.value("existing_id", j.value("id", "")),
+                j.value("notes", ""),
+                j.value("totp_secret", "")));
+        } else if (action == "delete") {
+            resp = nlohmann::json::parse(HandleDelete(
+                j.value("existing_id", j.value("id", ""))));
         } else {
             resp["ok"] = false;
             resp["error"] = "unknown_action";
@@ -721,7 +747,8 @@ std::string BridgeServer::HandleCheck(const std::string& hostname, const std::st
 }
 
 std::string BridgeServer::HandleSave(const std::string& action, const std::string& hostname, const std::string& title,
-                                     const std::string& username, const std::string& password, const std::string& existing_id)
+                                     const std::string& username, const std::string& password, const std::string& existing_id,
+                                     const std::string& notes, const std::string& totp_secret)
 {
     {
         std::lock_guard<std::mutex> lk(m_cache_mutex);
@@ -741,6 +768,8 @@ std::string BridgeServer::HandleSave(const std::string& action, const std::strin
     cmd->username = username;
     cmd->password = password;
     cmd->existing_id = existing_id;
+    cmd->notes = notes;
+    cmd->totp_secret = totp_secret;
 
     auto fut = cmd->completion_promise.get_future();
 
@@ -762,6 +791,56 @@ std::string BridgeServer::HandleSave(const std::string& action, const std::strin
     resp["ok"] = res.ok;
     if (res.ok) {
         resp["uuid"] = res.uuid;
+    } else {
+        resp["error"] = res.error;
+    }
+    return resp.dump();
+}
+
+std::string BridgeServer::HandleDelete(const std::string& existing_id)
+{
+    if (existing_id.empty()) {
+        nlohmann::json err;
+        err["ok"] = false;
+        err["error"] = "Missing credential id";
+        return err.dump();
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(m_cache_mutex);
+        if (!m_is_unlocked) {
+            nlohmann::json err;
+            err["ok"] = false;
+            err["error"] = "Vault locked";
+            return err.dump();
+        }
+    }
+
+    auto cmd = std::make_shared<PendingCommand>();
+    cmd->id = m_next_cmd_id.fetch_add(1);
+    cmd->action = "delete";
+    cmd->existing_id = existing_id;
+
+    auto fut = cmd->completion_promise.get_future();
+
+    {
+        std::lock_guard<std::mutex> lk(m_queue_mutex);
+        m_pending_writes.push_back(cmd);
+    }
+
+    // Wait up to 5 seconds for UI thread to drain
+    if (fut.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+        nlohmann::json timeoutErr;
+        timeoutErr["ok"] = false;
+        timeoutErr["error"] = "Timeout waiting for UI thread";
+        return timeoutErr.dump();
+    }
+
+    SaveResult res = fut.get();
+    nlohmann::json resp;
+    resp["ok"] = res.ok;
+    if (res.ok) {
+        resp["deleted_id"] = res.uuid;
     } else {
         resp["error"] = res.error;
     }

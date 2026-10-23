@@ -29,6 +29,8 @@ struct PendingCommand {
     std::string username;
     std::string password;
     std::string existing_id;
+    std::string notes;
+    std::string totp_secret;
     std::promise<SaveResult> completion_promise;
 };
 
@@ -89,7 +91,9 @@ private:
     std::string HandleSearch(const std::string& query);
     std::string HandleCheck(const std::string& hostname, const std::string& username, const std::string& password);
     std::string HandleSave(const std::string& action, const std::string& hostname, const std::string& title,
-                           const std::string& username, const std::string& password, const std::string& existing_id);
+                           const std::string& username, const std::string& password, const std::string& existing_id,
+                           const std::string& notes = "", const std::string& totp_secret = "");
+    std::string HandleDelete(const std::string& existing_id);
 
     static std::wstring GetCurrentUserSid();
     static bool VerifyClientProcess(HANDLE hPipe);
