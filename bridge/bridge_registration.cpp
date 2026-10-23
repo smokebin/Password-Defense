@@ -110,7 +110,8 @@ bool RegisterNativeMessagingHosts(const std::wstring& bridgeExePath)
     chromeJson["path"] = exePathUtf8;
     chromeJson["type"] = "stdio";
     chromeJson["allowed_origins"] = nlohmann::json::array({
-        "chrome-extension://ambjefgkfkdeeggkajdmnpjhlefbkpak/", // Deterministic unpacked dev extension ID
+        "chrome-extension://ambjefgkfkdeeggkajdmnpjhlefbkpak/", // Deterministic unpacked dev extension ID (with key)
+        "chrome-extension://npakpebejcicljijonidnldpljhjnjik/", // Path-based unpacked dev extension ID (without key)
         "chrome-extension://pnmfdfepbjflmbefebfjkdfjlekmghde/", // Web Store ID placeholder
         "chrome-extension://hlnfbfbkmgdeopnmfdfejlmbefebfjkd/"  // Secondary dev ID
     });
