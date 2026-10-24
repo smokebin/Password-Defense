@@ -2805,7 +2805,7 @@ static void render_locked_screen()
 
         ImGui::Dummy(ImVec2(0, 8));
         ImGui::PushFont(render::FontLarge);
-        ImGui::TextUnformatted("Two-Factor Authentication");
+        ImGui::TextUnformatted("Vault Two-Factor Authentication");
         ImGui::PopFont();
 
         ImGui::Dummy(ImVec2(0, 4));
