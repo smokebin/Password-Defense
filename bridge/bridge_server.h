@@ -87,6 +87,8 @@ private:
     // Request handlers (running on worker thread)
     std::string ProcessMessage(const std::string& jsonRequest);
     std::string HandleStatus();
+    std::string HandleCards();
+    std::string HandleIdentities();
     std::string HandleMatch(const std::string& url);
     std::string HandleSearch(const std::string& query);
     std::string HandleCheck(const std::string& hostname, const std::string& username, const std::string& password);

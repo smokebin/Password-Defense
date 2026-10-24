@@ -619,6 +619,10 @@ std::string BridgeServer::ProcessMessage(const std::string& jsonRequest)
         std::string action = j.value("action", "");
         if (action == "status") {
             resp = nlohmann::json::parse(HandleStatus());
+        } else if (action == "get_cards") {
+            resp = nlohmann::json::parse(HandleCards());
+        } else if (action == "get_identities") {
+            resp = nlohmann::json::parse(HandleIdentities());
         } else if (action == "match") {
             resp = nlohmann::json::parse(HandleMatch(j.value("url", "")));
         } else if (action == "search") {
@@ -654,6 +658,42 @@ std::string BridgeServer::ProcessMessage(const std::string& jsonRequest)
     return resp.dump();
 }
 
+static nlohmann::json CredentialToJson(const Credential& c) {
+    nlohmann::json item = {
+        {"uuid",        c.uuid},
+        {"title",       c.title},
+        {"user",        c.user},
+        {"email",       c.email},
+        {"password",    c.password},
+        {"website",     c.website},
+        {"group",       c.group},
+        {"notes",       c.notes},
+        {"totp_secret", c.totp_secret},
+        {"is_favorite", c.is_favorite},
+        {"is_pinned",   c.is_pinned},
+        {"type",        static_cast<int>(c.type)},
+        // Credit Card fields
+        {"card_number",      c.card_number},
+        {"card_expiry",      c.card_expiry},
+        {"card_cvv",         c.card_cvv},
+        {"card_brand",       c.card_brand},
+        {"cardholder_name",  c.cardholder_name},
+        {"card_address",     c.card_address},
+        {"card_city",        c.card_city},
+        {"card_postal_code", c.card_postal_code},
+        // Identity fields
+        {"full_name",        c.full_name},
+        {"id_type",          c.id_type},
+        {"id_number",        c.id_number},
+        {"date_of_birth",    c.date_of_birth},
+        {"expiry_date",      c.expiry_date},
+        {"country",          c.country},
+        {"address",          c.address},
+        {"phone",            c.phone}
+    };
+    return item;
+}
+
 std::string BridgeServer::HandleStatus()
 {
     std::lock_guard<std::mutex> lk(m_cache_mutex);
@@ -662,6 +702,50 @@ std::string BridgeServer::HandleStatus()
     resp["unlocked"] = m_is_unlocked;
     resp["credCount"] = m_is_unlocked ? m_cached_creds.size() : 0;
     resp["activeVault"] = m_active_vault_path;
+    return resp.dump();
+}
+
+std::string BridgeServer::HandleCards()
+{
+    std::lock_guard<std::mutex> lk(m_cache_mutex);
+    nlohmann::json arr = nlohmann::json::array();
+    if (!m_is_unlocked) {
+        nlohmann::json err;
+        err["ok"] = false;
+        err["error"] = "Vault locked";
+        return err.dump();
+    }
+    for (const auto& c : m_cached_creds) {
+        if (c.is_deleted()) continue;
+        if (c.type == CredType::CreditCard) {
+            arr.push_back(CredentialToJson(c));
+        }
+    }
+    nlohmann::json resp;
+    resp["ok"] = true;
+    resp["cards"] = arr;
+    return resp.dump();
+}
+
+std::string BridgeServer::HandleIdentities()
+{
+    std::lock_guard<std::mutex> lk(m_cache_mutex);
+    nlohmann::json arr = nlohmann::json::array();
+    if (!m_is_unlocked) {
+        nlohmann::json err;
+        err["ok"] = false;
+        err["error"] = "Vault locked";
+        return err.dump();
+    }
+    for (const auto& c : m_cached_creds) {
+        if (c.is_deleted()) continue;
+        if (c.type == CredType::Identity) {
+            arr.push_back(CredentialToJson(c));
+        }
+    }
+    nlohmann::json resp;
+    resp["ok"] = true;
+    resp["identities"] = arr;
     return resp.dump();
 }
 
@@ -684,20 +768,7 @@ std::string BridgeServer::HandleMatch(const std::string& url)
             if (c.website.empty()) continue;
             std::string credHost = extractHostname(c.website);
             if (credHost == tabHost || areDomainsEquivalent(credHost, tabHost)) {
-                arr.push_back({
-                    {"uuid",        c.uuid},
-                    {"title",       c.title},
-                    {"user",        c.user},
-                    {"email",       c.email},
-                    {"password",    c.password},
-                    {"website",     c.website},
-                    {"group",       c.group},
-                    {"notes",       c.notes},
-                    {"totp_secret", c.totp_secret},
-                    {"is_favorite", c.is_favorite},
-                    {"is_pinned",   c.is_pinned},
-                    {"type",        static_cast<int>(c.type)}
-                });
+                arr.push_back(CredentialToJson(c));
             }
         }
     }
@@ -739,20 +810,7 @@ std::string BridgeServer::HandleSearch(const std::string& query)
                 toLower(c.website).find(q) != std::string::npos ||
                 toLower(c.notes).find(q) != std::string::npos)
             {
-                arr.push_back({
-                    {"uuid",        c.uuid},
-                    {"title",       c.title},
-                    {"user",        c.user},
-                    {"email",       c.email},
-                    {"password",    c.password},
-                    {"website",     c.website},
-                    {"group",       c.group},
-                    {"notes",       c.notes},
-                    {"totp_secret", c.totp_secret},
-                    {"is_favorite", c.is_favorite},
-                    {"is_pinned",   c.is_pinned},
-                    {"type",        static_cast<int>(c.type)}
-                });
+                arr.push_back(CredentialToJson(c));
                 if (arr.size() >= 50) break;
             }
         }
