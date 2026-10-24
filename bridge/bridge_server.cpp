@@ -102,6 +102,77 @@ static std::string extractHostname(const std::string& urlOrDomain)
 }
 
 // ============================================================
+// Equivalent Domains Engine
+// ============================================================
+
+static const std::vector<std::vector<std::string>>& getKnownEquivalentClusters()
+{
+    static const std::vector<std::vector<std::string>> clusters = {
+        // Google ecosystem
+        { "google.com", "youtube.com", "gmail.com", "blogger.com", "blogspot.com" },
+        // Microsoft ecosystem
+        { "microsoft.com", "live.com", "office.com", "outlook.com", "xbox.com", "skype.com", "microsoftonline.com", "bing.com", "msn.com", "hotmail.com" },
+        // Apple ecosystem
+        { "apple.com", "icloud.com" },
+        // Amazon ecosystem
+        { "amazon.com", "primevideo.com", "audible.com", "twitch.tv" },
+        // Meta ecosystem
+        { "facebook.com", "instagram.com", "threads.net", "messenger.com" },
+        // PayPal / eBay
+        { "paypal.com", "ebay.com" },
+        // Twitter / X
+        { "x.com", "twitter.com" },
+        // Sony
+        { "playstation.com", "sony.com", "sonyentertainmentnetwork.com" },
+        // Yahoo
+        { "yahoo.com", "aol.com" },
+        // Discord
+        { "discord.com", "discordapp.com" },
+        // Reddit
+        { "reddit.com", "redd.it" },
+        // Steam
+        { "steampowered.com", "steamcommunity.com" }
+    };
+    return clusters;
+}
+
+static bool areDomainsEquivalent(const std::string& d1, const std::string& d2)
+{
+    if (d1.empty() || d2.empty()) return false;
+    if (d1 == d2) return true;
+
+    // Check known clusters
+    const auto& clusters = getKnownEquivalentClusters();
+    for (const auto& cluster : clusters) {
+        bool hasD1 = false;
+        bool hasD2 = false;
+        for (const auto& domain : cluster) {
+            if (d1 == domain) hasD1 = true;
+            if (d2 == domain) hasD2 = true;
+            if (hasD1 && hasD2) return true;
+        }
+    }
+
+    // Check ccTLD equivalence: e.g. amazon.com vs amazon.co.uk or google.com vs google.de
+    auto getBrand = [](const std::string& d) -> std::string {
+        size_t dot = d.find('.');
+        return (dot != std::string::npos) ? d.substr(0, dot) : d;
+    };
+    std::string b1 = getBrand(d1);
+    std::string b2 = getBrand(d2);
+    if (!b1.empty() && b1 == b2) {
+        static const std::unordered_set<std::string> multiTldBrands = {
+            "amazon", "google", "ebay", "wikipedia", "yahoo", "craigslist"
+        };
+        if (multiTldBrands.count(b1)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// ============================================================
 // BridgeServer Implementation
 // ============================================================
 
@@ -612,7 +683,7 @@ std::string BridgeServer::HandleMatch(const std::string& url)
             if (c.is_deleted()) continue;
             if (c.website.empty()) continue;
             std::string credHost = extractHostname(c.website);
-            if (credHost == tabHost) {
+            if (credHost == tabHost || areDomainsEquivalent(credHost, tabHost)) {
                 arr.push_back({
                     {"uuid",        c.uuid},
                     {"title",       c.title},
@@ -721,7 +792,7 @@ std::string BridgeServer::HandleCheck(const std::string& hostname, const std::st
             if (c.website.empty()) continue;
 
             std::string credDomain = extractHostname(c.website);
-            if (credDomain != submittedDomain) continue;
+            if (credDomain != submittedDomain && !areDomainsEquivalent(credDomain, submittedDomain)) continue;
 
             std::string credUser = c.user.empty() ? c.email : c.user;
             if (credUser != username) continue;
