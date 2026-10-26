@@ -2548,23 +2548,8 @@ namespace ui
                     }
                     else
                     {
-                        ImGui::PushStyleColor(ImGuiCol_FrameBg, IsDarkTheme() ? IM_COL32(255,255,255,4) : IM_COL32(0,0,0,4));
-                        ImGui::PushStyleColor(ImGuiCol_Border,  IsDarkTheme() ? IM_COL32(255,255,255,20) : IM_COL32(0,0,0,20));
-                        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
-                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 10.0f));
-                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-                        {
-                            float notesW = ImGui::GetContentRegionAvail().x;
-                            ImVec2 fpad(12.0f, 10.0f);
-                            float innerW = notesW - fpad.x * 2;
-                            ImVec2 tSz = ImGui::CalcTextSize(c.notes.c_str(), nullptr, false, innerW);
-                            float notesH = ImMax(tSz.y + fpad.y * 2, 40.0f);
-                            std::string notesDisplay = c.notes;
-                            InputTextMultilineString("##tp_notes_view", &notesDisplay, ImVec2(notesW, notesH),
-                                ImGuiInputTextFlags_ReadOnly);
-                        }
-                        ImGui::PopStyleVar(3);
-                        ImGui::PopStyleColor(2);
+                        float notesW = ImGui::GetContentRegionAvail().x;
+                        NotesDisplayLifted("##tp_notes_view", c.notes.c_str(), notesW);
                     }
                 }
 

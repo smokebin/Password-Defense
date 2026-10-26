@@ -449,8 +449,15 @@ namespace ui
                     if (ImGui::TableSetColumnIndex(3))
                     {
                         float colW = ImGui::GetContentRegionAvail().x;
-                        std::string preview = c.notes.substr(0, 80);
-                        TextEllipsisClipped(preview.c_str(), colW);
+                        const bool noteLocked = cfg::get_reprompt_reveal_notes() &&
+                            !g_notes_visible.count(MakeRowKey(activeVaultKey, c.id));
+                        if (noteLocked)
+                            ImGui::TextDisabled("Secure Note");
+                        else
+                        {
+                            std::string preview = c.notes.substr(0, 80);
+                            TextEllipsisClipped(preview.c_str(), colW);
+                        }
                     }
                 }
                 else
@@ -772,8 +779,7 @@ namespace ui
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
                     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, fpad);
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
-                    std::string notesPreview = c.notes;
-                    InputTextMultilineString("##tbl_popup_notes", &notesPreview, ImVec2(noteW, notesH), ImGuiInputTextFlags_ReadOnly);
+                    NotesDisplayWrapped("##tbl_popup_notes", c.notes.c_str(), ImVec2(noteW, notesH));
                     ImGui::PopStyleVar(3);
                     ImGui::PopStyleColor(2);
                 }

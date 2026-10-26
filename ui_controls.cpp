@@ -2774,6 +2774,15 @@ namespace ui
         s.card_bg_dark  = savedCardDark;
         s.card_bg_light = savedCardLight;
 
+        // Master-password reprompt, rendered nested INSIDE the Settings popup so a
+        // Settings-triggered reprompt (disabling a security setting, etc.) stacks on top
+        // of Settings instead of opening as a sibling top-level modal — which would fight
+        // Settings for the popup slot every frame, blocking all input. The root-level
+        // RenderRepromptModal() skips itself while Settings is open, so this is the only
+        // one that runs. Must stay nested because the approval is consumed back in this
+        // function (IsRepromptApproved checks above). Self-guards if not open.
+        RenderRepromptModal();
+
         ImGui::EndPopup();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(3);

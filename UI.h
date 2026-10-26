@@ -323,6 +323,10 @@ namespace ui
     std::string StripNonDigits(const std::string& s);
     std::string FormatWithPattern(const std::string& digits, const char* pattern);
     bool InputTextMultilineString(const char* label, std::string* str, const ImVec2& size, ImGuiInputTextFlags flags = 0);
+    // read-only, word-wrapped note display; caller pushes the frame style vars (FrameBg/FramePadding/etc)
+    void NotesDisplayWrapped(const char* id, const char* text, const ImVec2& size);
+    // lifted-card variant that matches the Security card container (used in detail tabs)
+    void NotesDisplayLifted(const char* id, const char* text, float width);
     bool SearchableCombo(const char* label, std::string& value,
                          const std::vector<std::string>& items,
                          const std::unordered_map<std::string, int>* counts = nullptr,

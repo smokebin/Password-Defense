@@ -2615,6 +2615,46 @@ namespace ui
         return changed;
     }
 
+    // InputTextMultiline cannot word-wrap (it scrolls/clips horizontally), so read-only
+    // note display uses a framed child with wrapped text instead. Caller pushes the same
+    // frame style vars it would for the input; FrameStyle consumes FrameBg/Border/Padding/Rounding.
+    void NotesDisplayWrapped(const char* id, const char* text, const ImVec2& size)
+    {
+        if (ImGui::BeginChild(id, size, ImGuiChildFlags_FrameStyle))
+        {
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextUnformatted(text);
+            ImGui::PopTextWrapPos();
+        }
+        ImGui::EndChild();
+    }
+
+    // Lifted-card note display — same CardSurface bg + double border + drop shadow as the
+    // Security card (BeginLiftedChild), so the Notes and Security detail tabs match. Grows
+    // vertically to fit the wrapped text (AutoResizeY).
+    void NotesDisplayLifted(const char* id, const char* text, float width)
+    {
+        const bool dk = IsDarkTheme();
+        LiftedChildColorSet lc;
+        lc.bg          = dk ? theme::CardSurface.dark     : theme::CardSurface.light;
+        lc.borderOuter = dk ? theme::CardBorderOuter.dark : theme::CardBorderOuter.light;
+        lc.borderInner = dk ? theme::CardBorderInner.dark : theme::CardBorderInner.light;
+        SetLiftedChildColors(lc);
+
+        if (BeginLiftedChild(id, ImVec2(width, 0), ImGuiWindowFlags_NoScrollbar))
+        {
+            const float padX = 12.0f;
+            ImGui::Dummy(ImVec2(0, 8.0f));
+            ImGui::Indent(padX);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + (width - padX * 2.0f));
+            ImGui::TextUnformatted(text);
+            ImGui::PopTextWrapPos();
+            ImGui::Unindent(padX);
+            ImGui::Dummy(ImVec2(0, 8.0f));
+        }
+        EndLiftedChild();
+    }
+
     // bullet-masked input with brief last-char reveal; cursor drawn manually
     bool InputTextPasswordReveal(const char* label, std::string* str, ImGuiInputTextFlags extra_flags, float reveal_duration_ms)
     {

@@ -4489,7 +4489,11 @@ static void render_unlocked_screen()
 
     render_credential_modal(v);
     RenderConflictModal();
-    ui::RenderRepromptModal();
+    // When Settings is open, the reprompt renders nested inside the Settings popup
+    // (see RenderSettingsPage) so it stacks instead of flashing as a sibling modal.
+    // Render at root only when Settings is closed (e.g. reprompts from credential views).
+    if (!g_shell.settings_modal_open)
+        ui::RenderRepromptModal();
     ui::RenderTrashModal(g_shell);
     ui::RenderSecurityCenterModal(g_shell);
     ui::RenderRecoveryKeyModal(g_shell);
