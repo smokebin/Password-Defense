@@ -19,6 +19,18 @@ namespace totp {
     // returns true on success; out_secret holds the base32 value
     bool parse_otpauth_uri(const std::string& uri, std::string& out_secret);
 
+    // richer otpauth:// parse: secret + issuer + account, plus a flag for
+    // non-standard params (digits != 6, algorithm != SHA1, period != 30) this
+    // SHA1/6/30 engine can't honor. valid=false if not a TOTP URI / no secret.
+    struct OtpauthInfo {
+        bool valid = false;
+        std::string secret;        // uppercased base32
+        std::string issuer;        // from ?issuer= or the "Issuer:Account" label
+        std::string account;       // the account/label portion
+        bool non_standard = false;
+    };
+    OtpauthInfo parse_otpauth_full(const std::string& uri);
+
     // decodes must yield >= 10 bytes
     bool is_valid_secret(const std::string& base32);
 

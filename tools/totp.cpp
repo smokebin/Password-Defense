@@ -254,6 +254,102 @@ bool parse_otpauth_uri(const std::string& uri, std::string& out_secret)
     return true;
 }
 
+// ---- otpauth:// helpers for parse_otpauth_full ----
+namespace {
+    std::string url_decode(const std::string& s)
+    {
+        auto hex = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        };
+        std::string out;
+        for (size_t i = 0; i < s.size(); ++i) {
+            if (s[i] == '%' && i + 2 < s.size()) {
+                int hi = hex(s[i + 1]), lo = hex(s[i + 2]);
+                if (hi >= 0 && lo >= 0) { out.push_back((char)((hi << 4) | lo)); i += 2; continue; }
+            }
+            out.push_back(s[i] == '+' ? ' ' : s[i]);
+        }
+        return out;
+    }
+
+    std::string trim_copy(const std::string& s)
+    {
+        size_t b = 0, e = s.size();
+        while (b < e && std::isspace((unsigned char)s[b])) ++b;
+        while (e > b && std::isspace((unsigned char)s[e - 1])) --e;
+        return s.substr(b, e - b);
+    }
+
+    // fetch a query-param value (raw, not url-decoded) by case-insensitive key
+    bool get_query_param(const std::string& uri, const std::string& key, std::string& out)
+    {
+        std::string lower = uri;  for (auto& c : lower) c = (char)std::tolower((unsigned char)c);
+        std::string lkey = key;   for (auto& c : lkey)  c = (char)std::tolower((unsigned char)c);
+        size_t qpos = lower.find('?');
+        if (qpos == std::string::npos) return false;
+        size_t search = qpos;
+        for (;;) {
+            size_t p = lower.find(lkey + "=", search);
+            if (p == std::string::npos) return false;
+            if (p > 0 && (lower[p - 1] == '?' || lower[p - 1] == '&')) {
+                size_t vstart = p + lkey.size() + 1;
+                size_t vend = uri.find('&', vstart);
+                out = (vend == std::string::npos) ? uri.substr(vstart) : uri.substr(vstart, vend - vstart);
+                return true;
+            }
+            search = p + 1;
+        }
+    }
+}
+
+OtpauthInfo parse_otpauth_full(const std::string& uri)
+{
+    OtpauthInfo info;
+
+    const std::string prefix = "otpauth://totp/";
+    if (uri.size() < prefix.size()) return info;
+    std::string head = uri.substr(0, prefix.size());
+    for (auto& ch : head) ch = (char)std::tolower((unsigned char)ch);
+    if (head != prefix) return info;
+
+    std::string secret;
+    if (!get_query_param(uri, "secret", secret)) return info;
+    secret = trim_copy(secret);
+    if (secret.empty()) return info;
+    for (auto& ch : secret) ch = (char)std::toupper((unsigned char)ch);
+    info.secret = secret;
+
+    size_t q = uri.find('?', prefix.size());
+    std::string label = url_decode(uri.substr(prefix.size(),
+        q == std::string::npos ? std::string::npos : q - prefix.size()));
+    std::string label_issuer, account = label;
+    size_t colon = label.find(':');
+    if (colon != std::string::npos) {
+        label_issuer = trim_copy(label.substr(0, colon));
+        account = trim_copy(label.substr(colon + 1));
+    }
+
+    std::string issuer_param;
+    if (get_query_param(uri, "issuer", issuer_param)) info.issuer = trim_copy(url_decode(issuer_param));
+    if (info.issuer.empty()) info.issuer = label_issuer;
+    info.account = account;
+
+    std::string v;
+    if (get_query_param(uri, "digits", v) && trim_copy(v) != "6") info.non_standard = true;
+    if (get_query_param(uri, "period", v) && trim_copy(v) != "30") info.non_standard = true;
+    if (get_query_param(uri, "algorithm", v)) {
+        std::string a = trim_copy(v);
+        for (auto& ch : a) ch = (char)std::toupper((unsigned char)ch);
+        if (a != "SHA1") info.non_standard = true;
+    }
+
+    info.valid = true;
+    return info;
+}
+
 bool is_valid_secret(const std::string& base32)
 {
     auto bytes = base32_decode(base32);

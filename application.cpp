@@ -315,6 +315,7 @@ struct CredentialModal
     Credential buf{};
     std::string password_buf{};
     std::string totp_secret_buf{};
+    bool totp_nonstandard = false;   // set when a pasted otpauth:// has 8-digit/SHA-256/60s params
     std::string tag_input_buf{};
     bool show_password = false;
     bool is_pinned = false;
@@ -339,6 +340,7 @@ struct CredentialModal
         buf = Credential{};
         password_buf.clear();
         totp_secret_buf.clear();
+        totp_nonstandard = false;
         tag_input_buf.clear();
         show_password = false;
         is_pinned = false;
@@ -362,6 +364,7 @@ struct CredentialModal
         buf.phone         = ui::FormatWithPattern(ui::StripNonDigits(c.phone),         "(###) ###-####");
         password_buf = pw;
         totp_secret_buf = c.totp_secret;
+        totp_nonstandard = false;   // stored secret is bare base32; standardness unknown
         tag_input_buf.clear();
         show_password = false;
         is_pinned = c.is_pinned;
@@ -384,6 +387,7 @@ struct CredentialModal
         buf = Credential{};
         password_buf.clear();
         totp_secret_buf.clear();
+        totp_nonstandard = false;
         tag_input_buf.clear();
         show_password = false;
         is_pinned = false;
@@ -1504,16 +1508,44 @@ static void render_credential_modal(VaultState& v)
         {
             //ImGui::TextDisabled(ICON_MDI_CLOCK " TOTP Secret");
             ImGui::SetNextItemWidth(fieldW - 110.0f);
-            ui::InputTextString(ICON_MDI_CLOCK " TOTP Secret", &g_cred_modal.totp_secret_buf);
+            bool totp_edited = ui::InputTextString(ICON_MDI_CLOCK " TOTP Secret", &g_cred_modal.totp_secret_buf);
 
-            // auto-parse otpauth:// URIs on paste
-            if (!g_cred_modal.totp_secret_buf.empty() &&
-                g_cred_modal.totp_secret_buf.size() > 15 &&
-                g_cred_modal.totp_secret_buf.find("otpauth://") != std::string::npos)
+            // on edit: auto-parse a pasted otpauth:// URI — pull the secret, back-fill
+            // empty title/user/email from issuer+account, and flag non-standard codes.
+            // a hand-typed bare secret clears the flag.
+            if (totp_edited)
             {
-                std::string parsed;
-                if (totp::parse_otpauth_uri(g_cred_modal.totp_secret_buf, parsed))
-                    g_cred_modal.totp_secret_buf = parsed;
+                if (g_cred_modal.totp_secret_buf.find("otpauth://") != std::string::npos)
+                {
+                    totp::OtpauthInfo info = totp::parse_otpauth_full(g_cred_modal.totp_secret_buf);
+                    if (info.valid)
+                    {
+                        g_cred_modal.totp_secret_buf = info.secret;
+                        g_cred_modal.totp_nonstandard = info.non_standard;
+                        if (g_cred_modal.buf.title.empty() && !info.issuer.empty())
+                            g_cred_modal.buf.title = info.issuer;
+                        if (!info.account.empty())
+                        {
+                            if (info.account.find('@') != std::string::npos) {
+                                if (g_cred_modal.buf.email.empty()) g_cred_modal.buf.email = info.account;
+                            } else {
+                                if (g_cred_modal.buf.user.empty()) g_cred_modal.buf.user = info.account;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    g_cred_modal.totp_nonstandard = false;
+                }
+            }
+
+            // non-standard code warning (set at paste time, persists until re-edited)
+            if (g_cred_modal.totp_nonstandard)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.65f, 0.20f, 1.0f));
+                ImGui::TextWrapped(ICON_MDI_ALERT " Non-standard code (8-digit, SHA-256, or 60s). The secret is saved, but the code shown may not match \xE2\x80\x94 keep using your current authenticator.");
+                ImGui::PopStyleColor();
             }
 
             if (!g_cred_modal.totp_secret_buf.empty())
